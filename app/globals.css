@@ -98,7 +98,8 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground font-sans antialiased;
+    @apply text-foreground font-sans antialiased;
+    background: #0a0a0a;
   }
 }
 
@@ -219,6 +220,20 @@
   @keyframes fadeIn {
     from { opacity: 0; transform: translateY(15px); }
     to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Chat demo message animations */
+  @keyframes messageSlide {
+    from { opacity: 0; transform: translateX(-20px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes messageSlideRight {
+    from { opacity: 0; transform: translateX(20px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes lineGrow {
+    from { transform: scaleY(0); }
+    to { transform: scaleY(1); }
   }
 
   /* Custom scrollbar */

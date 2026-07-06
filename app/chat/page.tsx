@@ -24,22 +24,35 @@ interface RegionalRoute {
   workerPhone: string;
 }
 
-// ─── Particle class ──────────────────────────────────────────────────
+// ─── Particle class (enhanced with connections + mouse interaction) ──
 class Particle {
-  x: number; y: number; size: number; speedX: number; speedY: number; alpha: number;
+  x: number; y: number; size: number; speedX: number; speedY: number; opacity: number;
   constructor(w: number, h: number) {
     this.x = Math.random() * w; this.y = Math.random() * h;
     this.size = Math.random() * 2 + 0.5;
-    this.speedX = Math.random() * 0.4 - 0.2; this.speedY = Math.random() * 0.4 - 0.2;
-    this.alpha = Math.random() * 0.4 + 0.1;
+    this.speedX = Math.random() * 1 - 0.5;
+    this.speedY = Math.random() * 1 - 0.5;
+    this.opacity = Math.random() * 0.5 + 0.1;
   }
-  update(w: number, h: number) {
+  update(w: number, h: number, mouseX: number | null, mouseY: number | null) {
     this.x += this.speedX; this.y += this.speedY;
-    if (this.x < 0 || this.x > w) this.speedX *= -1;
-    if (this.y < 0 || this.y > h) this.speedY *= -1;
+    if (this.x > w) this.x = 0;
+    if (this.x < 0) this.x = w;
+    if (this.y > h) this.y = 0;
+    if (this.y < 0) this.y = h;
+    // Mouse repulsion
+    if (mouseX != null && mouseY != null) {
+      const dx = mouseX - this.x;
+      const dy = mouseY - this.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (distance < 100) {
+        this.x -= dx * 0.01;
+        this.y -= dy * 0.01;
+      }
+    }
   }
   draw(ctx: CanvasRenderingContext2D) {
-    ctx.fillStyle = `rgba(255,255,255,${this.alpha})`;
+    ctx.fillStyle = `rgba(99, 102, 241, ${this.opacity})`;
     ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2); ctx.fill();
   }
 }
@@ -123,23 +136,47 @@ export default function ChatPage() {
 
   const workflowLocales = getWorkflowLocales(patientName);
 
-  // ── Particle animation ──
+  // ── Particle animation (with connections + mouse) ──
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+    const mouse = { x: null as number | null, y: null as number | null };
     const resize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
     resize();
     window.addEventListener('resize', resize);
-    particlesRef.current = Array.from({ length: 60 }, () => new Particle(canvas.width, canvas.height));
+    const onMouseMove = (e: MouseEvent) => { mouse.x = e.x; mouse.y = e.y; };
+    window.addEventListener('mousemove', onMouseMove);
+    particlesRef.current = Array.from({ length: 100 }, () => new Particle(canvas.width, canvas.height));
     const animate = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      particlesRef.current.forEach((p) => { p.update(canvas.width, canvas.height); p.draw(ctx); });
+      const pts = particlesRef.current;
+      // Draw connection lines
+      for (let i = 0; i < pts.length; i++) {
+        for (let j = i + 1; j < pts.length; j++) {
+          const dx = pts[i].x - pts[j].x;
+          const dy = pts[i].y - pts[j].y;
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          if (distance < 100) {
+            ctx.strokeStyle = `rgba(99, 102, 241, ${0.1 * (1 - distance / 100)})`;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(pts[i].x, pts[i].y);
+            ctx.lineTo(pts[j].x, pts[j].y);
+            ctx.stroke();
+          }
+        }
+      }
+      pts.forEach((p) => { p.update(canvas.width, canvas.height, mouse.x, mouse.y); p.draw(ctx); });
       animRef.current = requestAnimationFrame(animate);
     };
     animate();
-    return () => { window.removeEventListener('resize', resize); cancelAnimationFrame(animRef.current); };
+    return () => {
+      window.removeEventListener('resize', resize);
+      window.removeEventListener('mousemove', onMouseMove);
+      cancelAnimationFrame(animRef.current);
+    };
   }, []);
 
   // ── Auto-scroll ──
@@ -348,13 +385,13 @@ export default function ChatPage() {
   const formatTime = (d: Date) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden" style={{ fontFamily: "'Inter', sans-serif", background: '#0a0a0a', color: 'white' }}>
+    <div className="h-screen flex flex-col overflow-hidden" style={{ fontFamily: "'Inter', sans-serif", color: 'white' }}>
       {/* Aurora + Particles */}
-      <div className="fixed inset-0 aurora-bg" style={{ zIndex: -3 }} />
-      <canvas ref={canvasRef} className="fixed inset-0 pointer-events-none" style={{ zIndex: -2 }} />
+      <div className="aurora-bg" style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 0 }} />
+      <canvas ref={canvasRef} style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1, pointerEvents: 'none' }} />
 
       {/* ── Navigation Header ── */}
-      <nav className="glass px-6 py-4 shrink-0 z-50">
+      <nav className="glass px-6 py-4 shrink-0" style={{ zIndex: 50, position: 'relative' }}>
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-sm">NS</div>
@@ -392,7 +429,7 @@ export default function ChatPage() {
       </nav>
 
       {/* ── Main Workspace Container ── */}
-      <main className="flex-grow flex flex-col max-w-4xl w-full mx-auto overflow-hidden relative z-10">
+      <main className="flex-grow flex flex-col max-w-4xl w-full mx-auto overflow-hidden" style={{ position: 'relative', zIndex: 10 }}>
         {/* Message Stream */}
         <div className="flex-grow p-6 overflow-y-auto space-y-6 chat-scroll">
           {messages.map((msg) => {
@@ -541,10 +578,10 @@ export default function ChatPage() {
         <input type="file" ref={xrayPickerRef} accept="image/*,.pdf" className="hidden" onChange={() => handleFileSelected('Chest X-ray')} />
 
         {/* ── Input Processing Panel ── */}
-        <div className="p-4 bg-gradient-to-t from-[#0a0a0a] via-[#0a0a0a]/90 to-transparent shrink-0 relative">
+        <div className="p-4 shrink-0 relative" style={{ background: 'linear-gradient(to top, #0a0a0a, rgba(10,10,10,0.9), transparent)' }}>
           {/* Backdrop overlay to close menu on outside click */}
           {attachMenuOpen && (
-            <div className="fixed inset-0 z-40" onClick={() => setAttachMenuOpen(false)} />
+            <div className="fixed inset-0" style={{ zIndex: 40 }} onClick={() => setAttachMenuOpen(false)} />
           )}
 
           {/* Attachment Floating Menu Popup */}
