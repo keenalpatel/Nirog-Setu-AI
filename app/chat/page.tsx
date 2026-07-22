@@ -145,7 +145,7 @@ export default function ChatPage() {
 
       if (SpeechRecognition) {
         const recognition = new SpeechRecognition();
-        recognition.continuous = false;
+        recognition.continuous = true;
         recognition.interimResults = true; // Enables live typing as you speak
 
         recognition.onstart = () => {
@@ -297,6 +297,11 @@ export default function ChatPage() {
   const handleSubmit = useCallback(
     async (e?: React.FormEvent) => {
       if (e) e.preventDefault();
+
+      if (isListening && recognitionRef.current) {
+        recognitionRef.current.stop();
+        setIsListening(false);
+      }
       const val = input.trim();
       if (!val && !attachedImage) return;
 
