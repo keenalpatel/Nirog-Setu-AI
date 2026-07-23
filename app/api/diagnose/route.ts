@@ -1,133 +1,161 @@
 import { NextResponse } from 'next/server';
 import { VertexAI, FunctionDeclarationSchemaType } from '@google-cloud/vertexai';
 
-// Initialize Vertex AI client using GCP environment variables
+export const maxDuration = 30;
+
 const projectId = process.env.GCP_PROJECT_ID || 'project-ad67eb63-a729-4ed5-a89d';
 const location = process.env.GCP_LOCATION || 'us-central1';
 
-const vertexAI = new VertexAI({ project: projectId, location: location });
+const vertexAI = new VertexAI({ project: projectId, location });
 
-// AlloyDB RAG Grounding Simulation (National TB & PHC Clinical Guidelines)
-const MOCK_RAG_KNOWLEDGE_BASE = {
-  respiratory: {
-    guideline: "National TB Elimination Program (NTEP) Protocol: Chronic cough > 2 weeks accompanied by unremitting fever, night sweats, or hemoptysis requires immediate sputum microscopy/NAAT and chest radiographs showing apical infiltrates or cavitation.",
-    keywords: ["cough", "fever", "x-ray", "breathing", "chest", "tb", "sputum"]
-  },
-  gastrointestinal: {
-    guideline: "Acute Gastroenteritis / Appendicitis Triage Protocol: Severe localized lower quadrant abdominal pain with persistent vomiting requires physical palpation to rule out acute abdomen. Hydration tracking is critical.",
-    keywords: ["stomach", "pain", "vomiting", "vomit", "belly", "abdomen"]
+// ── 1. NLM CLINICAL TABLE API (Dynamic ICD-10 Resolution) ──────────────
+async function validateICD10WithNLM(conditionName: string): Promise<{ icd_10_code: string; canonical_name: string } | null> {
+  try {
+    // Strip broad descriptors to get pure search terms (e.g. "Bacterial Pneumonia" -> "Pneumonia")
+    const cleanTerm = conditionName.replace(/high|moderate|low|acute|severe|chronic/gi, '').trim();
+
+    const url = `https://clinicaltables.nlm.nih.gov/api/icd10cm/v3/search?sf=code,name&terms=${encodeURIComponent(cleanTerm)}&maxList=5`;
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    const matches = data[3]; // format: [[code, display_name], ...]
+
+    if (matches && matches.length > 0) {
+      // Find the first standard J-code if available (J00-J99 covers Respiratory System)
+      const primaryRespiratoryCode = matches.find((m: string[]) => m[0].startsWith('J'));
+      
+      const selectedMatch = primaryRespiratoryCode || matches[0];
+      const [icdCode, canonicalName] = selectedMatch;
+
+      return { icd_10_code: icdCode, canonical_name: canonicalName };
+    }
+    return null;
+  } catch (err) {
+    console.warn('[NLM API Warning] ICD-10 lookup failed:', err);
+    return null;
   }
-};
+}
 
+// ── MAIN POST ROUTE ────────────────────────────────────────────────────
 export async function POST(request: Request) {
   try {
     const { history = [], imageBase64 } = await request.json();
 
-    // 1. AlloyDB RAG Simulation Layer: Dynamically match patient context to guidelines
-    const fullTextHistory = history
-      .map((msg: any) => msg.content || '')
-      .join(" ")
-      .toLowerCase();
-
-    let groundedGuideline = "General PHC Primary Assessment Guidelines.";
-    if (MOCK_RAG_KNOWLEDGE_BASE.respiratory.keywords.some(k => fullTextHistory.includes(k))) {
-      groundedGuideline = MOCK_RAG_KNOWLEDGE_BASE.respiratory.guideline;
-    } else if (MOCK_RAG_KNOWLEDGE_BASE.gastrointestinal.keywords.some(k => fullTextHistory.includes(k))) {
-      groundedGuideline = MOCK_RAG_KNOWLEDGE_BASE.gastrointestinal.guideline;
-    }
-
-    // 2. Define the exact JSON Schema output for structured clinical evaluation
     const responseSchema = {
       type: FunctionDeclarationSchemaType.OBJECT,
       properties: {
+        primary_diagnosis: { type: FunctionDeclarationSchemaType.STRING },
         differential_diagnoses: {
           type: FunctionDeclarationSchemaType.ARRAY,
           items: {
             type: FunctionDeclarationSchemaType.OBJECT,
             properties: {
               condition_name: { type: FunctionDeclarationSchemaType.STRING },
-              confidence_score: { 
-                type: FunctionDeclarationSchemaType.STRING, 
-                description: 'e.g., 85%' 
-              },
-              clinical_rationale: { type: FunctionDeclarationSchemaType.STRING }
+              confidence_score: { type: FunctionDeclarationSchemaType.STRING },
+              clinical_rationale: { type: FunctionDeclarationSchemaType.STRING },
+              icd_10_code: { type: FunctionDeclarationSchemaType.STRING },
             },
-            required: ['condition_name', 'confidence_score', 'clinical_rationale']
-          }
+            required: ['condition_name', 'confidence_score', 'clinical_rationale'],
+          },
         },
-        severity_tier: { 
-          type: FunctionDeclarationSchemaType.STRING, 
-          description: 'low, medium, high, critical' 
+        required_followup_tests: {
+          type: FunctionDeclarationSchemaType.ARRAY,
+          items: {
+            type: FunctionDeclarationSchemaType.STRING,
+          },
         },
-        required_followup_tests: { 
-          type: FunctionDeclarationSchemaType.ARRAY, 
-          items: { type: FunctionDeclarationSchemaType.STRING },
-          description: 'Tests or questions needed if confidence is low.'
-        },
-        patient_action_plan: { type: FunctionDeclarationSchemaType.STRING }
+        patient_action_plan: { type: FunctionDeclarationSchemaType.STRING },
+        triage_urgency_level: { type: FunctionDeclarationSchemaType.STRING },
       },
-      required: ['differential_diagnoses', 'severity_tier', 'required_followup_tests', 'patient_action_plan'],
+      required: [
+        'primary_diagnosis',
+        'differential_diagnoses',
+        'required_followup_tests',
+        'patient_action_plan',
+        'triage_urgency_level',
+      ],
     };
 
-    // 3. Initialize Gemini 2.5 Flash model on Vertex AI
     const generativeModel = vertexAI.getGenerativeModel({
       model: 'gemini-2.5-flash',
       generationConfig: {
         responseMimeType: 'application/json',
         responseSchema: responseSchema,
-        temperature: 0.2, // Low temperature for consistent clinical reasoning
+        temperature: 0.1,
+        maxOutputTokens: 8192,
       },
       systemInstruction: {
         role: 'system',
-        parts: [{
-          text: `You are Diagnose-Agent, an expert clinical diagnostic system for Nirog-Setu AI.
-Analyze patient history alongside any uploaded visual medical records (X-ray, lab reports, skin lesions).
-Ground your diagnoses on national medical protocols (ICMR / NTEP / WHO) provided in context. Always output valid structured JSON.`
-        }]
+        parts: [
+          {
+            text: `You are Diagnose-Agent for Nirog-Setu AI.
+Evaluate patient symptom history and attached medical images (e.g. Chest X-rays).
+Provide clear differential diagnoses under Primary Health Centre (PHC) guidelines.
+Always include standard WHO/ICD-10 primary category codes (e.g., J18.9 for Pneumonia).
+Keep clinical rationales concise and punchy (under 2-3 sentences per condition).`,
+          },
+        ],
+      },
+    });
+
+    const promptParts: any[] = [
+      { text: `Evaluate this case history: ${JSON.stringify(history, null, 2)}` },
+    ];
+
+    if (imageBase64 && typeof imageBase64 === 'string') {
+      const mimeMatch = imageBase64.match(/^data:(image\/[a-zA-Z0-9+-]+);base64,/);
+      const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+      const cleanBase64 = imageBase64.replace(/^data:image\/[a-zA-Z0-9+-]+;base64,/, '').trim();
+
+      if (cleanBase64) {
+        promptParts.push({
+          inlineData: {
+            data: cleanBase64,
+            mimeType: mimeType,
+          },
+        });
       }
-    });
-
-    // 4. Build prompt parts (Text context + optional Base64 Multimodal Image)
-    const promptText = `
-Review the provided case history and any attached visual medical records.
-
-[GROUNDED KNOWLEDGE RESOURCE (AlloyDB RAG Matching)]
-${groundedGuideline}
-
-[PATIENT CASE TIMELINE]
-${history.map((msg: any) => `${(msg.type || msg.role || 'user').toUpperCase()}: ${msg.content}`).join("\n")}
-
-Perform a thorough diagnostic evaluation. You must generate a primary differential diagnosis list complete with confidence metrics, severe warning signs, and concrete requests for follow-up testing if the evidence is insufficient.
-`;
-
-    const parts: any[] = [{ text: promptText }];
-
-    // Inject Base64 image payload if provided (e.g., Chest X-Ray for TB analysis)
-    if (imageBase64) {
-      const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
-      parts.push({
-        inlineData: {
-          data: cleanBase64,
-          mimeType: 'image/jpeg'
-        }
-      });
     }
 
-    // 5. Execute multimodal inference on Vertex AI
     const result = await generativeModel.generateContent({
-      contents: [{ role: 'user', parts }]
+      contents: [{ role: 'user', parts: promptParts }],
     });
 
-    const responseText = result.response?.candidates?.[0]?.content?.parts?.[0]?.text;
+    let responseText = result.response?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!responseText) {
-      throw new Error('Received an empty response from Vertex AI Diagnose-Agent.');
+      throw new Error('Received empty response from Vertex AI engine.');
     }
 
-    const diagnosticReport = JSON.parse(responseText.trim());
+    responseText = responseText.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+    const diagnosticReport = JSON.parse(responseText);
 
-    return NextResponse.json({ success: true, report: diagnosticReport });
+    // Dynamic ICD-10 Resolution with NLM API
+    if (diagnosticReport.differential_diagnoses && Array.isArray(diagnosticReport.differential_diagnoses)) {
+      const primaryDiagnosis = diagnosticReport.differential_diagnoses[0];
+
+      if (primaryDiagnosis && primaryDiagnosis.condition_name) {
+        const nlmData = await validateICD10WithNLM(primaryDiagnosis.condition_name);
+
+        if (nlmData) {
+          primaryDiagnosis.icd_10_code = nlmData.icd_10_code;
+          primaryDiagnosis.validated_canonical_name = nlmData.canonical_name;
+        } else if (!primaryDiagnosis.icd_10_code) {
+          primaryDiagnosis.icd_10_code = 'J18.9'; // Fallback standard respiratory code
+        }
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      report: diagnosticReport,
+    });
+
   } catch (error: any) {
-    console.error('Diagnose Engine Error:', error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    console.error('Diagnose-Agent Error:', error);
+    return NextResponse.json(
+      { success: false, error: error.message || 'Diagnostic execution failure' },
+      { status: 500 }
+    );
   }
 }

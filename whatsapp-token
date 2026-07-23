@@ -1,0 +1,10 @@
+curl -i -X POST `
+     https://graph.facebook.com/v25.0/1173478315856930/messages `
+     -H 'Authorization: Bearer EAActCwDd490BSGgia6QqvOpm1y44rY46hZCZBVctlXW4XclBbkooar8rf441USj7kAb8wqdUHmRXM0TsWkGyROCpPJacEqfIQ6KxWXTO9qhIviZCTzDM4NpZC8whEbil5s5AaUXtQYYsMKLZCCQxiTkZCLgQnZBShYBy9yibQThTkvF11TTL4tW1u7ULpwF8KXrgZAXkMYcm2mS4iK9XN8BIzrryp3Ib3ZCwYD4aUNpq9yEvgpcomGUY0BZBFTQaW9TzwWjglnY3Ccq7mIzZCZBBMcFGSvL9' `
+     -H 'Content-Type: application/json' `
+     -d '{ \"messaging_product\": \"whatsapp\",
+     \"to\": \"918668988741\",
+     \"type\": \"template\",
+     \"template\": { \"name\": \"jaspers_market_order_confirmation_v1\",
+     \"language\": { \"code\": \"en_US\" },
+     \"components\": [{ \"type\": \"body\", \"parameters\": [{ \"type\": \"text\", \"text\": \"John Doe\" }, { \"type\": \"text\", \"text\": \"123456\" }, { \"type\": \"text\", \"text\": \"Jul 23, 2026\" }] }] } }'
