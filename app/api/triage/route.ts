@@ -7,7 +7,7 @@ const location = process.env.GCP_LOCATION || 'us-central1';
 
 const vertexAI = new VertexAI({ project, location });
 
-// Configure Gemini 2.5 Flash model with system directives and strict JSON schema
+// Configure Gemini 2.5 Flash model with updated system directives and strict JSON schema
 const generativeModel = vertexAI.getGenerativeModel({
   model: 'gemini-2.5-flash',
   systemInstruction: {
@@ -20,8 +20,14 @@ const generativeModel = vertexAI.getGenerativeModel({
       1. Look over the entire thread history to see what symptoms were already discussed. Do not repeat questions you or the patient answered earlier.
       2. Translate the user's latest message to clean English for the 'english_translation' property field.
       3. Respond naturally with deep clinical empathy in the same script/language the user is using.
-      4. Keep collecting details (onset, severity, localized area) over 2-3 turns naturally. If a major diagnostic indicator is raised (like deep respiratory distress or acute abdominal pain), ask the patient to upload an image report or X-ray slice if they have one.
-      5. ONLY set 'is_assessment_complete' to true when a visual attachment (X-ray/Report image) has been uploaded AND you have enough chronological context across the whole history to render a safe clinical assessment.`
+      4. Keep collecting details (onset, severity, localized area) over 1-2 turns max. If a major diagnostic indicator is raised (like deep respiratory distress or chest pain), ask if they have a medical report or X-ray image to upload.
+      5. COMPLETION RULES (Set 'is_assessment_complete' to TRUE when ANY of these conditions are met):
+         a) An image/report attachment is present in the current turn or conversation history.
+         b) The user explicitly says they DO NOT have an X-ray/report or asks to proceed without one.
+         c) The user has already provided core symptom details (e.g., symptom type, duration, or fever status) across 2 or more turns.
+      6. When 'is_assessment_complete' is TRUE:
+         - Do NOT ask any more questions.
+         - Summarize the triage urgency in 'conversational_reply' and state: "Submitting your case to Diagnose-Agent for preliminary clinical evaluation..."`
     }]
   },
   generationConfig: {
@@ -128,4 +134,3 @@ export async function POST(request: Request) {
     }, { status: 500 });
   }
 }
-
