@@ -15,6 +15,9 @@ interface ChatMessage {
   translationResult?: string;
   diagnosisData?: any;
   prescriptionData?: any;
+  referralData?: any;
+  ashaData?: any;
+  emergencyData?: any;
 }
 
 interface RegionalRoute {
@@ -192,15 +195,146 @@ export default function ChatPage() {
     appendMessage('badge', text);
   }, [appendMessage]);
 
+  // ── Unified Pipeline Executor for Multi-Agent Resolution ──
+  const runMultiAgentPipeline = useCallback(async (diagnosePromise: Promise<any>) => {
+    let prog = 0;
+    const interval = setInterval(async () => {
+      prog += 25;
+      setProgressValue(prog);
+      
+      if (prog >= 100) {
+        clearInterval(interval);
+        
+        try {
+          const diagnoseData = await diagnosePromise;
+          if (!diagnoseData || !diagnoseData.success) {
+            throw new Error(diagnoseData?.error || "Diagnosis verification failed");
+          }
+
+          const report = diagnoseData.report || {};
+          const urgency = (report.triage_urgency_level || report.urgency || 'Moderate').toString();
+          const primaryDiag = report.primary_diagnosis || report.diagnosis || report.condition || 'General Diagnostic Assessment';
+
+          let prescribeData = null;
+          let referData = null;
+          let ashaData = null;
+          let emergencyData = null;
+
+          try {
+            // 1. Prescribe-Agent
+            const prescribeRes = await fetch('/api/prescribe', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                diagnosticReport: report,
+                patientAge: 30,
+                allergies: []
+              })
+            });
+            if (prescribeRes.ok) prescribeData = await prescribeRes.json();
+
+            // 2. Refer-Agent
+            const referRes = await fetch('/api/refer', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                patientLang: patientLang || 'English',
+                urgencyLevel: urgency,
+                requiredSpecialty: primaryDiag
+              })
+            });
+            if (referRes.ok) referData = await referRes.json();
+
+            // 3. ASHA-Agent (Only for High/Critical)
+            if (['high', 'critical'].includes(urgency.toLowerCase())) {
+              const ashaRes = await fetch('/api/asha', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  patientName: patientName || 'Patient',
+                  patientLang: patientLang || 'English',
+                  primaryDiagnosis: primaryDiag,
+                  urgencyLevel: urgency
+                })
+              });
+              if (ashaRes.ok) ashaData = await ashaRes.json();
+            }
+
+            // 4. Emergency-Agent (Only for Critical)
+            if (urgency.toLowerCase() === 'critical') {
+              const emergencyRes = await fetch('/api/emergency', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  patientName: patientName || 'Patient',
+                  patientLang: patientLang || 'English',
+                  primaryDiagnosis: primaryDiag
+                })
+              });
+              if (emergencyRes.ok) emergencyData = await emergencyRes.json();
+            }
+          } catch (secondaryErr) {
+            console.warn("Secondary agent non-fatal error:", secondaryErr);
+          }
+
+          setShowProgress(false);
+
+          // Dynamic score for trace log
+          const primaryDiff = report?.differential_diagnoses?.[0];
+          const rawScore = primaryDiff?.confidence_score ?? report?.confidence_score;
+          const formattedScore = rawScore 
+            ? (typeof rawScore === 'number' && rawScore <= 1 ? `${(rawScore * 100).toFixed(1)}%` : `${rawScore}`)
+            : 'Grounded';
+
+          appendMessage('rag_trace', formattedScore);
+
+          setTimeout(() => {
+            appendBadge(
+              urgency.toLowerCase() === 'critical'
+                ? '🚨 CRITICAL ESCALATION: Emergency 108 Ambulance & ASHA Alerts Dispatched'
+                : urgency.toLowerCase() === 'high'
+                ? '⚡ HIGH URGENCY: Priority ASHA Worker Notified & PHC Referral Locked'
+                : 'Diagnose & Prescribe Execution Completed • ICMR Grounding Verified'
+            );
+
+            setMessages((prev) => [...prev, {
+              id: uid(),
+              type: 'diagnosis_card',
+              content: '',
+              timestamp: new Date(),
+              diagnosisData: report,
+              prescriptionData: prescribeData?.success ? prescribeData.prescription : null,
+              referralData: referData?.success ? referData.referral : null,
+              ashaData: ashaData?.success ? ashaData.ashaDispatch : null,
+              emergencyData: emergencyData?.success ? emergencyData.emergency : null,
+            }]);
+
+            if (ashaData?.success) {
+              setDispatchCount('1,826');
+              setToast({ visible: true, phone: ashaData.ashaDispatch.workerPhone });
+            }
+
+            setAttachedImage(null);
+          }, 1000);
+
+        } catch (diagError) {
+          console.error("Multi-agent execution error:", diagError);
+          setShowProgress(false);
+          appendMessage('ai', 'Error processing secondary diagnostic rules verification.');
+        }
+      }
+    }, 150);
+  }, [appendMessage, appendBadge, patientLang, patientName]);
+
   // ── Direct Multi-Agent Submitter for Image/Upload Triggers ──
   const triggerDirectImageSubmit = useCallback(async (imageBase64Data: string, fileName: string) => {
     setIsTyping(true);
-    const userMsgContent = `Patient attached a medical file: ${fileName}`;
+    const userMsgContent = `Patient attached a medical image/scan.`;
     
     const newLocalUserMsg = { 
       id: uid(), 
       type: 'user' as const, 
-      content: `🩻 ${fileName}`, 
+      content: `🩻 Attached Medical Scan: ${fileName}`, 
       timestamp: new Date() 
     };
     
@@ -236,72 +370,15 @@ export default function ChatPage() {
           imageBase64: imageBase64Data
         })
       }).then(res => res.json());
-      
-      let prog = 0;
-      const interval = setInterval(async () => {
-        prog += 25;
-        setProgressValue(prog);
-        
-        if (prog >= 100) {
-          clearInterval(interval);
-          
-          try {
-            const diagnoseData = await diagnosePromise;
-            if (!diagnoseData.success) throw new Error(diagnoseData.error || "Diagnosis failed");
 
-            // Extract dynamic confidence score for RAG trace
-            const primaryDiff = diagnoseData.report?.differential_diagnoses?.[0];
-            const rawScore = primaryDiff?.confidence_score ?? diagnoseData.report?.confidence_score;
-            const formattedScore = rawScore 
-              ? (typeof rawScore === 'number' && rawScore <= 1 ? `${(rawScore * 100).toFixed(1)}%` : `${rawScore}`)
-              : 'Grounded';
-
-            // Prescribe-Agent execution
-            const prescribeRes = await fetch('/api/prescribe', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                diagnosticReport: diagnoseData.report,
-                patientAge: 30,
-                allergies: []
-              })
-            });
-            const prescribeData = await prescribeRes.json();
-
-            setShowProgress(false);
-            appendMessage('rag_trace', formattedScore);
-
-            setTimeout(() => {
-              appendBadge('Diagnose & Prescribe Execution Completed • ICMR / openFDA Grounding Verified');
-              
-              setMessages((prev) => [...prev, {
-                id: uid(),
-                type: 'diagnosis_card',
-                content: '',
-                timestamp: new Date(),
-                diagnosisData: diagnoseData.report,
-                prescriptionData: prescribeData.success ? prescribeData.prescription : null,
-              }]);
-              
-              const defaultRoute = regionalDataMap[patientLang || 'Hindi'] || regionalDataMap['English'];
-              setDispatchCount('1,826');
-              setToast({ visible: true, phone: defaultRoute.workerPhone });
-              setAttachedImage(null); 
-            }, 1000);
-          } catch (diagError) {
-            console.error("Multi-agent execution error:", diagError);
-            setShowProgress(false);
-            appendMessage('ai', 'Error processing secondary diagnostic rules verification.');
-          }
-        }
-      }, 150);
+      await runMultiAgentPipeline(diagnosePromise);
 
     } catch (error) {
       console.error("Direct upload submission block failed:", error);
       setIsTyping(false);
       appendMessage('ai', 'Network error communicating with the system core.');
     }
-  }, [messages, appendMessage, appendBadge, patientLang]);
+  }, [messages, appendMessage, appendBadge, runMultiAgentPipeline]);
 
   // ── Standard Text Form Submit handler ──
   const handleSubmit = useCallback(
@@ -372,67 +449,8 @@ export default function ChatPage() {
               imageBase64: attachedImage
             })
           }).then(res => res.json());
-          
-          let prog = 0;
-          const interval = setInterval(async () => {
-            prog += 25;
-            setProgressValue(prog);
-            
-            if (prog >= 100) {
-              clearInterval(interval);
-              
-              try {
-                // 1. Wait for Diagnose-Agent response
-                const diagnoseData = await diagnosePromise;
-                if (!diagnoseData.success) throw new Error(diagnoseData.error || "Diagnosis failed");
 
-                // Dynamic score for trace log
-                const primaryDiff = diagnoseData.report?.differential_diagnoses?.[0];
-                const rawScore = primaryDiff?.confidence_score ?? diagnoseData.report?.confidence_score;
-                const formattedScore = rawScore 
-                  ? (typeof rawScore === 'number' && rawScore <= 1 ? `${(rawScore * 100).toFixed(1)}%` : `${rawScore}`)
-                  : 'Grounded';
-
-                // 2. Call Prescribe-Agent immediately with the diagnose output
-                const prescribeRes = await fetch('/api/prescribe', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    diagnosticReport: diagnoseData.report,
-                    patientAge: 30,
-                    allergies: []
-                  })
-                });
-                const prescribeData = await prescribeRes.json();
-
-                setShowProgress(false);
-                appendMessage('rag_trace', formattedScore);
-
-                setTimeout(() => {
-                  appendBadge('Diagnose & Prescribe Execution Completed • ICMR / openFDA Grounding Verified');
-                  
-                  // 3. Pass both agent outputs to state
-                  setMessages((prev) => [...prev, {
-                    id: uid(),
-                    type: 'diagnosis_card',
-                    content: '',
-                    timestamp: new Date(),
-                    diagnosisData: diagnoseData.report,
-                    prescriptionData: prescribeData.success ? prescribeData.prescription : null,
-                  }]);
-                  
-                  const defaultRoute = regionalDataMap[patientLang || 'Hindi'] || regionalDataMap['English'];
-                  setDispatchCount('1,826');
-                  setToast({ visible: true, phone: defaultRoute.workerPhone });
-                  setAttachedImage(null); 
-                }, 1000);
-              } catch (diagError) {
-                console.error("Multi-agent execution error:", diagError);
-                setShowProgress(false);
-                appendMessage('ai', 'Error processing diagnostic or prescription verification.');
-              }
-            }
-          }, 150);
+          await runMultiAgentPipeline(diagnosePromise);
         }
       
       } catch (error) {
@@ -440,7 +458,7 @@ export default function ChatPage() {
         appendMessage('ai', 'Network error communicating with the system core.');
       }
     },
-    [input, attachedImage, attachedFileName, patientLang, messages, appendMessage, appendBadge],
+    [input, attachedImage, attachedFileName, messages, appendMessage, appendBadge, runMultiAgentPipeline],
   );
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, type: string) => {
@@ -585,155 +603,127 @@ export default function ChatPage() {
               );
             }
 
-if (msg.type === 'diagnosis_card' && msg.diagnosisData) {
-  const report = msg.diagnosisData;
-  const rx = msg.prescriptionData;
+            if (msg.type === 'diagnosis_card' && msg.diagnosisData) {
+              const report = msg.diagnosisData;
+              const rx = msg.prescriptionData;
+              const ref = msg.referralData;
+              const asha = msg.ashaData;
+              const sos = msg.emergencyData;
 
-  // Extract primary condition name
-  const conditionName = report.primary_diagnosis || report.condition_name || 'Diagnosis Complete';
-  const urgency = report.triage_urgency_level || 'Moderate';
+              const conditionName = report.primary_diagnosis || report.diagnosis || 'Diagnosis Complete';
+              const urgency = report.triage_urgency_level || report.urgency || 'Moderate';
 
-  return (
-    <div key={msg.id} className="flex w-full justify-start animate-fade my-2">
-      <div className="w-full max-w-2xl bg-neutral-900/90 border border-red-500/30 rounded-2xl overflow-hidden shadow-2xl backdrop-blur-md">
-        
-        {/* Header with Urgency Badge */}
-        <div className="bg-red-500/10 border-b border-red-500/20 px-6 py-4 flex items-center justify-between">
-          <h4 className="text-red-400 font-bold text-sm tracking-wider uppercase flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-red-400 animate-pulse" /> Primary Diagnosis & Action Plan
-          </h4>
-          <span className={`text-xs font-mono px-3 py-1 rounded-full border font-semibold uppercase ${
-            urgency.toLowerCase() === 'high' 
-              ? 'bg-red-950/80 text-red-400 border-red-500/40' 
-              : 'bg-amber-950/80 text-amber-400 border-amber-500/40'
-          }`}>
-            {urgency} Urgency
-          </span>
-        </div>
+              return (
+                <div key={msg.id} className="flex w-full justify-start animate-fade my-2">
+                  <div className="w-full max-w-2xl bg-neutral-900/90 border border-red-500/30 rounded-2xl overflow-hidden shadow-2xl backdrop-blur-md">
+                    
+                    {/* Header with Urgency Badge */}
+                    <div className="bg-red-500/10 border-b border-red-500/20 px-6 py-4 flex items-center justify-between">
+                      <h4 className="text-red-400 font-bold text-sm tracking-wider uppercase flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-red-400 animate-pulse" /> Multi-Agent Diagnostic Report
+                      </h4>
+                      <span className={`text-xs font-mono px-3 py-1 rounded-full border font-semibold uppercase ${
+                        urgency.toLowerCase() === 'critical' ? 'bg-red-600 text-white border-red-400 animate-pulse' :
+                        urgency.toLowerCase() === 'high' ? 'bg-red-950/80 text-red-400 border-red-500/40' :
+                        'bg-amber-950/80 text-amber-400 border-amber-500/40'
+                      }`}>
+                        {urgency} Urgency
+                      </span>
+                    </div>
 
-        <div className="p-6 space-y-5 text-sm text-left">
-          
-          {/* 1. Top Primary Condition Display */}
-          <div className="bg-black/60 p-4 rounded-xl border border-white/10 space-y-1">
-            <div className="text-[10px] uppercase font-mono tracking-wider text-gray-400">Primary Diagnosis Summary</div>
-            <h3 className="text-lg font-bold text-red-400">{conditionName}</h3>
-          </div>
-
-          {/* 2. Differential Diagnoses List & ICD-10 Badges */}
-          {Array.isArray(report.differential_diagnoses) && report.differential_diagnoses.length > 0 && (
-            <div className="space-y-3">
-              <div className="text-[11px] uppercase font-mono tracking-wider text-indigo-300 font-bold">
-                📋 Differential Diagnoses & Clinical Rationale
-              </div>
-              <div className="space-y-2.5">
-                {report.differential_diagnoses.map((diff: any, idx: number) => {
-                  const conf = diff.confidence_score 
-                    ? (typeof diff.confidence_score === 'number' && diff.confidence_score <= 1 
-                        ? `${(diff.confidence_score * 100).toFixed(0)}%` 
-                        : diff.confidence_score)
-                    : '';
-
-                  return (
-                    <div key={idx} className="bg-black/50 p-3.5 rounded-xl border border-white/10 space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="font-semibold text-gray-100 text-sm">
-                          {idx + 1}. {diff.condition_name}
-                          {conf && <span className="ml-2 text-xs font-normal text-indigo-400">({conf} confidence)</span>}
-                        </div>
-                        {diff.icd_10_code && (
-                          <span className="bg-blue-950/80 border border-blue-500/40 text-blue-300 text-[11px] font-mono px-2.5 py-0.5 rounded">
-                            ICD-10: <strong className="text-white">{diff.icd_10_code}</strong>
-                          </span>
-                        )}
+                    <div className="p-6 space-y-5 text-sm text-left">
+                      
+                      {/* 1. Primary Condition */}
+                      <div className="bg-black/60 p-4 rounded-xl border border-white/10 space-y-1">
+                        <div className="text-[10px] uppercase font-mono tracking-wider text-gray-400">Primary Diagnosis Summary</div>
+                        <h3 className="text-lg font-bold text-red-400">{conditionName}</h3>
                       </div>
-                      {diff.clinical_rationale && (
-                        <p className="text-xs text-gray-300 leading-relaxed">
-                          {diff.clinical_rationale}
-                        </p>
+
+                      {/* 2. EMERGENCY-AGENT (Critical SOS Alert) */}
+                      {sos && (
+                        <div className="bg-red-950/60 border border-red-500/60 p-4 rounded-xl space-y-3 animate-pulse">
+                          <div className="flex justify-between items-center text-red-300 font-bold font-mono text-xs uppercase">
+                            <span>🚨 EMERGENCY 108 AMBULANCE DISPATCHED</span>
+                            <span>Ticket: {sos.sosTicketId}</span>
+                          </div>
+                          <p className="text-xs text-white">
+                            Paramedics en route. Estimated arrival in <strong>{sos.etaMinutes} minutes</strong>.
+                          </p>
+                          <div className="bg-black/50 p-3 rounded-lg text-xs space-y-1 text-gray-200">
+                            <div className="font-semibold text-red-400">First-Aid Instructions While Help Is En Route:</div>
+                            <ul className="list-disc pl-4 space-y-1 text-[11px]">
+                              {sos.firstAidInstructions?.map((step: string, i: number) => (
+                                <li key={i}>{step}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
                       )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
 
-          {/* 3. Follow-up Diagnostic Tests Required */}
-          {Array.isArray(report.required_followup_tests) && report.required_followup_tests.length > 0 && (
-            <div className="bg-indigo-950/20 border border-indigo-500/30 p-4 rounded-xl space-y-2">
-              <div className="text-xs font-mono text-indigo-300 font-bold uppercase tracking-wider">
-                🧪 Recommended Diagnostic & Lab Tests
-              </div>
-              <div className="flex flex-wrap gap-2 pt-1">
-                {report.required_followup_tests.map((test: string, idx: number) => (
-                  <span key={idx} className="bg-indigo-900/40 border border-indigo-400/30 text-indigo-200 text-xs px-2.5 py-1 rounded-lg">
-                    • {test}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+                      {/* 3. ASHA-AGENT (Community Health Worker Alert) */}
+                      {asha && (
+                        <div className="bg-emerald-950/30 border border-emerald-500/40 p-4 rounded-xl space-y-2">
+                          <div className="flex justify-between items-center">
+                            <span className="text-xs font-mono text-emerald-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" /> ASHA Worker Priority Alert Sent
+                            </span>
+                            <span className="text-[10px] font-mono text-emerald-300/80">ID: {asha.dispatchId}</span>
+                          </div>
+                          <div className="text-xs text-gray-200 space-y-1">
+                            <div><strong>Assigned Worker:</strong> {asha.assignedWorker} ({asha.workerPhone})</div>
+                            <div><strong>Action Status:</strong> {asha.actionRequired}</div>
+                          </div>
+                        </div>
+                      )}
 
-          {/* 4. Patient Action Plan */}
-          {report.patient_action_plan && (
-            <div className="p-4 rounded-xl bg-purple-950/20 border border-purple-500/30 space-y-1">
-              <div className="text-xs font-mono font-bold text-purple-300 uppercase tracking-wider">
-                🎯 Patient Action Plan
-              </div>
-              <p className="text-xs leading-relaxed text-gray-200">
-                {report.patient_action_plan}
-              </p>
-            </div>
-          )}
+                      {/* 4. REFER-AGENT (PHC Referral Mapping) */}
+                      {ref && (
+                        <div className="bg-blue-950/30 border border-blue-500/40 p-4 rounded-xl space-y-2">
+                          <div className="flex justify-between items-center text-xs font-mono text-blue-300 font-bold uppercase tracking-wider">
+                            <span>🏥 Assigned Health Facility Referral</span>
+                            <span>Ref: {ref.referralCode}</span>
+                          </div>
+                          <div className="text-xs text-gray-200 space-y-1">
+                            <div className="font-bold text-white text-sm">{ref.facility}</div>
+                            <div className="text-gray-400">{ref.address} ({ref.distance} away)</div>
+                            <div className="flex gap-4 pt-1 text-[11px] text-blue-200 font-mono">
+                              <span>🛏️ {ref.beds}</span>
+                              <span>👨‍⚕️ {ref.assignedDoctor}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
-          {/* 5. openFDA Safety Notice */}
-          {report.fda_safety_notice && (
-            <div className="p-3.5 rounded-xl bg-amber-950/30 border border-amber-500/30 text-amber-200 text-xs space-y-1">
-              <div className="font-mono font-bold text-amber-400 flex items-center gap-1.5">
-                <span>⚠️ openFDA Clinical Safety Alert</span>
-              </div>
-              <p className="text-[11px] leading-relaxed text-amber-200/80">
-                {typeof report.fda_safety_notice === 'string' 
-                  ? report.fda_safety_notice 
-                  : report.fda_safety_notice.contraindications}
-              </p>
-            </div>
-          )}
+                      {/* 5. PRESCRIBE-AGENT Output */}
+                      {rx && rx.prescriptions && rx.prescriptions.length > 0 && (
+                        <div className="bg-emerald-950/20 border border-emerald-500/30 p-4 rounded-xl space-y-3">
+                          <div className="flex justify-between items-center">
+                            <span className="text-xs font-mono text-emerald-400 font-bold uppercase tracking-wider">
+                              💊 Prescribe-Agent Protocol (ICMR Aligned)
+                            </span>
+                          </div>
+                          <div className="space-y-2">
+                            {rx.prescriptions.map((p: any, idx: number) => (
+                              <div key={idx} className="bg-black/50 border border-emerald-500/20 p-3 rounded-lg flex justify-between items-start text-xs">
+                                <div>
+                                  <span className="font-bold text-emerald-300 text-sm block">{p.medication_name}</span>
+                                  <span className="text-gray-400 text-[11px]">{p.purpose || 'Standard Dosage'}</span>
+                                </div>
+                                <div className="text-right font-mono text-emerald-200 text-[11px]">
+                                  <div>{p.dosage} • {p.frequency}</div>
+                                  <div className="text-gray-400">Duration: {p.duration}</div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
-          {/* 6. Prescribe-Agent Output */}
-          {rx && rx.prescriptions && rx.prescriptions.length > 0 && (
-            <div className="bg-emerald-950/20 border border-emerald-500/30 p-4 rounded-xl space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-xs font-mono text-emerald-400 font-bold uppercase tracking-wider">
-                  💊 Prescribe-Agent Plan (ICMR / NEML Aligned)
-                </span>
-                <span className="text-[10px] font-mono text-emerald-300/70">
-                  {rx.icmr_guideline_reference || rx.mohfw_guideline_reference || 'MOHFW Standard Protocol'}
-                </span>
-              </div>
-
-              <div className="space-y-2">
-                {rx.prescriptions.map((p: any, idx: number) => (
-                  <div key={idx} className="bg-black/50 border border-emerald-500/20 p-3 rounded-lg flex justify-between items-start text-xs">
-                    <div>
-                      <span className="font-bold text-emerald-300 text-sm block">{p.medication_name}</span>
-                      <span className="text-gray-400 text-[11px]">{p.purpose || p.route || 'Standard Dosage'}</span>
-                    </div>
-                    <div className="text-right font-mono text-emerald-200 text-[11px]">
-                      <div>{p.dosage} • {p.frequency}</div>
-                      <div className="text-gray-400">Duration: {p.duration}</div>
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-        </div>
-      </div>
-    </div>
-  );
-}
+                </div>
+              );
+            }
 
             const isUser = msg.type === 'user';
             return (
@@ -818,7 +808,7 @@ if (msg.type === 'diagnosis_card' && msg.diagnosisData) {
               }`}
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 0 3-3v-6a3 3 0 0 0-3-3 3 3 0 0 0-3 3v6a3 3 0 0 0 3 3z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 0 3-3 3 3 0 0 0-3 3v6a3 3 0 0 0 3 3z" />
               </svg>
             </button>
 

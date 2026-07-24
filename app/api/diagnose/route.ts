@@ -130,9 +130,17 @@ export async function POST(request: Request) {
             text: `You are Diagnose-Agent for Nirog-Setu AI.
 Evaluate patient symptom history and attached medical images (e.g. Chest X-rays).
 Provide clear differential diagnoses under Primary Health Centre (PHC) guidelines.
-CRITICAL: Do NOT append urgency levels or brackets like '(High)' into condition_name or primary_diagnosis. Output clean standard condition names (e.g. 'Bacterial Pneumonia', 'Acute Bronchitis').
-Always include standard WHO/ICD-10 primary category codes (e.g., J18.9 for Pneumonia).
-Keep clinical rationales concise and punchy (under 2-3 sentences per condition).`,
+
+TRIAGE URGENCY LEVEL GUIDELINES (triage_urgency_level):
+1. CRITICAL: Reserve strictly for immediate life-threatening conditions (e.g., massive hemoptysis/coughing large amounts of blood, severe chest pain, shortness of breath at rest, cyanosis, unconsciousness).
+2. HIGH: Minor/occasional blood-tinged sputum or trace blood while coughing slowly/dryly, high fever (>102°F) for several days without respiratory collapse, or moderate respiratory distress. This requires PHC Doctor referral & ASHA Visit, but NOT 108 Emergency Ambulance dispatch.
+3. MODERATE: Mild cold, low-grade fever, sore throat, or routine mild symptoms.
+4. LOW: Informational or general hygiene queries.
+
+CRITICAL FORMATTING:
+- Do NOT append urgency levels or brackets like '(High)' into condition_name or primary_diagnosis. Output clean standard condition names (e.g. 'Bacterial Pneumonia', 'Acute Bronchitis').
+- Always include standard WHO/ICD-10 primary category codes (e.g., J18.9 for Pneumonia).
+- Keep clinical rationales concise and punchy (under 2-3 sentences per condition).`,
           },
         ],
       },
@@ -191,9 +199,22 @@ Keep clinical rationales concise and punchy (under 2-3 sentences per condition).
       }
     }
 
-    // EDGE-CASE FIX: Sanitize top-level primary_diagnosis string before returning
+    // EDGE-CASE FIX: Sanitize top-level primary_diagnosis string
     if (diagnosticReport.primary_diagnosis) {
       diagnosticReport.primary_diagnosis = cleanConditionTerm(diagnosticReport.primary_diagnosis);
+    }
+
+    // SAFETY GUARDRAIL: Demote 'Critical' to 'High' if blood cough is mild/occasional without severe shortness of breath
+    const fullHistoryText = JSON.stringify(history).toLowerCase();
+    const hasMinorBlood = /slowly|sometimes|flecks|streaks|few drops|little/i.test(fullHistoryText);
+    const hasSevereDistress = /shortness of breath|breathless|severe chest pain|unconscious|fainted|massive/i.test(fullHistoryText);
+
+    if (
+      diagnosticReport.triage_urgency_level?.toUpperCase() === 'CRITICAL' &&
+      hasMinorBlood &&
+      !hasSevereDistress
+    ) {
+      diagnosticReport.triage_urgency_level = 'High';
     }
 
     return NextResponse.json({
