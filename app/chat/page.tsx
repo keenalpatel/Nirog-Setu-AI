@@ -585,113 +585,155 @@ export default function ChatPage() {
               );
             }
 
-            if (msg.type === 'diagnosis_card' && msg.diagnosisData) {
-              const report = msg.diagnosisData;
-              const rx = msg.prescriptionData;
+if (msg.type === 'diagnosis_card' && msg.diagnosisData) {
+  const report = msg.diagnosisData;
+  const rx = msg.prescriptionData;
 
-              // Extract differential array from API response
-              const differential = Array.isArray(report.differential_diagnoses) && report.differential_diagnoses.length > 0
-                ? report.differential_diagnoses[0]
-                : null;
+  // Extract primary condition name
+  const conditionName = report.primary_diagnosis || report.condition_name || 'Diagnosis Complete';
+  const urgency = report.triage_urgency_level || 'Moderate';
 
-              // Dynamic properties extraction
-              const conditionName = differential?.condition_name || report.primary_diagnosis || report.condition_name || report.diagnosis || 'No Abnormalities Detected';
-              
-              const rawConfidence = differential?.confidence_score ?? report.confidence_score ?? report.confidence;
-              const confidenceDisplay = rawConfidence 
-                ? (typeof rawConfidence === 'number' && rawConfidence <= 1 ? `${(rawConfidence * 100).toFixed(1)}%` : `${rawConfidence}`)
-                : '';
+  return (
+    <div key={msg.id} className="flex w-full justify-start animate-fade my-2">
+      <div className="w-full max-w-2xl bg-neutral-900/90 border border-red-500/30 rounded-2xl overflow-hidden shadow-2xl backdrop-blur-md">
+        
+        {/* Header with Urgency Badge */}
+        <div className="bg-red-500/10 border-b border-red-500/20 px-6 py-4 flex items-center justify-between">
+          <h4 className="text-red-400 font-bold text-sm tracking-wider uppercase flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-red-400 animate-pulse" /> Primary Diagnosis & Action Plan
+          </h4>
+          <span className={`text-xs font-mono px-3 py-1 rounded-full border font-semibold uppercase ${
+            urgency.toLowerCase() === 'high' 
+              ? 'bg-red-950/80 text-red-400 border-red-500/40' 
+              : 'bg-amber-950/80 text-amber-400 border-amber-500/40'
+          }`}>
+            {urgency} Urgency
+          </span>
+        </div>
 
-              const icd10 = differential?.icd_10_code || report.icd_10_code || report.icd10 || null;
-              const rationale = differential?.clinical_rationale || report.clinical_rationale || report.summary || 'Pulmonary fields appear clear with no active focal consolidation.';
+        <div className="p-6 space-y-5 text-sm text-left">
+          
+          {/* 1. Top Primary Condition Display */}
+          <div className="bg-black/60 p-4 rounded-xl border border-white/10 space-y-1">
+            <div className="text-[10px] uppercase font-mono tracking-wider text-gray-400">Primary Diagnosis Summary</div>
+            <h3 className="text-lg font-bold text-red-400">{conditionName}</h3>
+          </div>
 
-              return (
-                <div key={msg.id} className="flex w-full justify-start animate-fade my-2">
-                  <div className="w-full max-w-2xl bg-neutral-900/90 border border-red-500/30 rounded-2xl overflow-hidden shadow-2xl backdrop-blur-md">
-                    
-                    {/* Header */}
-                    <div className="bg-red-500/10 border-b border-red-500/20 px-6 py-4 flex items-center justify-between">
-                      <h4 className="text-red-400 font-bold text-sm tracking-wider uppercase flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" /> Diagnostic &amp; Prescription Output
-                      </h4>
-                      <span className="text-xs text-red-300 font-mono bg-red-500/20 px-2 py-0.5 rounded border border-red-500/30">
-                        Validated Response
-                      </span>
-                    </div>
+          {/* 2. Differential Diagnoses List & ICD-10 Badges */}
+          {Array.isArray(report.differential_diagnoses) && report.differential_diagnoses.length > 0 && (
+            <div className="space-y-3">
+              <div className="text-[11px] uppercase font-mono tracking-wider text-indigo-300 font-bold">
+                📋 Differential Diagnoses & Clinical Rationale
+              </div>
+              <div className="space-y-2.5">
+                {report.differential_diagnoses.map((diff: any, idx: number) => {
+                  const conf = diff.confidence_score 
+                    ? (typeof diff.confidence_score === 'number' && diff.confidence_score <= 1 
+                        ? `${(diff.confidence_score * 100).toFixed(0)}%` 
+                        : diff.confidence_score)
+                    : '';
 
-                    <div className="p-6 space-y-4 text-sm text-left">
-                      
-                      {/* Primary Diagnosis Box */}
-                      <div className="bg-black/60 p-4 rounded-xl border border-white/10 space-y-2">
-                        <div className="text-[10px] uppercase font-mono tracking-wider text-gray-400">Primary Diagnosis</div>
-                        <div className="flex items-center justify-between gap-2">
-                          <h3 className="text-base font-bold text-red-400">
-                            {conditionName}
-                            {confidenceDisplay && (
-                              <span className="ml-2 text-xs text-gray-400 font-normal">
-                                ({confidenceDisplay})
-                              </span>
-                            )}
-                          </h3>
-                          {icd10 && (
-                            <span className="bg-blue-950 border border-blue-500/40 text-blue-300 text-xs font-mono px-2.5 py-1 rounded">
-                              ICD-10: <strong className="text-white">{icd10}</strong>
-                            </span>
-                          )}
+                  return (
+                    <div key={idx} className="bg-black/50 p-3.5 rounded-xl border border-white/10 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="font-semibold text-gray-100 text-sm">
+                          {idx + 1}. {diff.condition_name}
+                          {conf && <span className="ml-2 text-xs font-normal text-indigo-400">({conf} confidence)</span>}
                         </div>
-                        <p className="text-xs text-gray-300 leading-relaxed pt-1">
-                          {rationale}
-                        </p>
+                        {diff.icd_10_code && (
+                          <span className="bg-blue-950/80 border border-blue-500/40 text-blue-300 text-[11px] font-mono px-2.5 py-0.5 rounded">
+                            ICD-10: <strong className="text-white">{diff.icd_10_code}</strong>
+                          </span>
+                        )}
                       </div>
-
-                      {/* openFDA Safety Notice */}
-                      {report.fda_safety_notice && (
-                        <div className="p-3.5 rounded-xl bg-amber-950/30 border border-amber-500/30 text-amber-200 text-xs space-y-1">
-                          <div className="font-mono font-bold text-amber-400 flex items-center gap-1.5">
-                            <span>⚠️ openFDA Clinical Safety Alert</span>
-                          </div>
-                          <p className="text-[11px] leading-relaxed text-amber-200/80">
-                            {typeof report.fda_safety_notice === 'string' 
-                              ? report.fda_safety_notice 
-                              : report.fda_safety_notice.contraindications}
-                          </p>
-                        </div>
+                      {diff.clinical_rationale && (
+                        <p className="text-xs text-gray-300 leading-relaxed">
+                          {diff.clinical_rationale}
+                        </p>
                       )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
-                      {/* Prescribe-Agent Output */}
-                      {rx && rx.prescriptions && rx.prescriptions.length > 0 && (
-                        <div className="bg-emerald-950/20 border border-emerald-500/30 p-4 rounded-xl space-y-3">
-                          <div className="flex justify-between items-center">
-                            <span className="text-xs font-mono text-emerald-400 font-bold uppercase tracking-wider">
-                              💊 Prescribe-Agent Plan (ICMR / NEML Aligned)
-                            </span>
-                            <span className="text-[10px] font-mono text-emerald-300/70">
-                              {rx.icmr_guideline_reference || rx.mohfw_guideline_reference || 'MOHFW Standard Protocol'}
-                            </span>
-                          </div>
+          {/* 3. Follow-up Diagnostic Tests Required */}
+          {Array.isArray(report.required_followup_tests) && report.required_followup_tests.length > 0 && (
+            <div className="bg-indigo-950/20 border border-indigo-500/30 p-4 rounded-xl space-y-2">
+              <div className="text-xs font-mono text-indigo-300 font-bold uppercase tracking-wider">
+                🧪 Recommended Diagnostic & Lab Tests
+              </div>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {report.required_followup_tests.map((test: string, idx: number) => (
+                  <span key={idx} className="bg-indigo-900/40 border border-indigo-400/30 text-indigo-200 text-xs px-2.5 py-1 rounded-lg">
+                    • {test}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
-                          <div className="space-y-2">
-                            {rx.prescriptions.map((p: any, idx: number) => (
-                              <div key={idx} className="bg-black/50 border border-emerald-500/20 p-3 rounded-lg flex justify-between items-start text-xs">
-                                <div>
-                                  <span className="font-bold text-emerald-300 text-sm block">{p.medication_name}</span>
-                                  <span className="text-gray-400 text-[11px]">{p.purpose || p.route || 'Standard Dosage'}</span>
-                                </div>
-                                <div className="text-right font-mono text-emerald-200 text-[11px]">
-                                  <div>{p.dosage} • {p.frequency}</div>
-                                  <div className="text-gray-400">Duration: {p.duration}</div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
+          {/* 4. Patient Action Plan */}
+          {report.patient_action_plan && (
+            <div className="p-4 rounded-xl bg-purple-950/20 border border-purple-500/30 space-y-1">
+              <div className="text-xs font-mono font-bold text-purple-300 uppercase tracking-wider">
+                🎯 Patient Action Plan
+              </div>
+              <p className="text-xs leading-relaxed text-gray-200">
+                {report.patient_action_plan}
+              </p>
+            </div>
+          )}
 
+          {/* 5. openFDA Safety Notice */}
+          {report.fda_safety_notice && (
+            <div className="p-3.5 rounded-xl bg-amber-950/30 border border-amber-500/30 text-amber-200 text-xs space-y-1">
+              <div className="font-mono font-bold text-amber-400 flex items-center gap-1.5">
+                <span>⚠️ openFDA Clinical Safety Alert</span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-amber-200/80">
+                {typeof report.fda_safety_notice === 'string' 
+                  ? report.fda_safety_notice 
+                  : report.fda_safety_notice.contraindications}
+              </p>
+            </div>
+          )}
+
+          {/* 6. Prescribe-Agent Output */}
+          {rx && rx.prescriptions && rx.prescriptions.length > 0 && (
+            <div className="bg-emerald-950/20 border border-emerald-500/30 p-4 rounded-xl space-y-3">
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-mono text-emerald-400 font-bold uppercase tracking-wider">
+                  💊 Prescribe-Agent Plan (ICMR / NEML Aligned)
+                </span>
+                <span className="text-[10px] font-mono text-emerald-300/70">
+                  {rx.icmr_guideline_reference || rx.mohfw_guideline_reference || 'MOHFW Standard Protocol'}
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                {rx.prescriptions.map((p: any, idx: number) => (
+                  <div key={idx} className="bg-black/50 border border-emerald-500/20 p-3 rounded-lg flex justify-between items-start text-xs">
+                    <div>
+                      <span className="font-bold text-emerald-300 text-sm block">{p.medication_name}</span>
+                      <span className="text-gray-400 text-[11px]">{p.purpose || p.route || 'Standard Dosage'}</span>
+                    </div>
+                    <div className="text-right font-mono text-emerald-200 text-[11px]">
+                      <div>{p.dosage} • {p.frequency}</div>
+                      <div className="text-gray-400">Duration: {p.duration}</div>
                     </div>
                   </div>
-                </div>
-              );
-            }
+                ))}
+              </div>
+            </div>
+          )}
+
+        </div>
+      </div>
+    </div>
+  );
+}
 
             const isUser = msg.type === 'user';
             return (

@@ -11,21 +11,35 @@ const vertexAI = new VertexAI({ project: projectId, location });
 async function fetchFDASafetyNotice(drugName: string): Promise<string | null> {
   if (!drugName) return null;
 
-  // Extract the primary chemical/generic name (e.g., "Ciprofloxacin 500mg" -> "Ciprofloxacin")
-  const genericName = drugName.split(' ')[0].trim();
+  // Clean drug string: remove dosages like "500mg", "10ml", "tabs", etc.
+  const cleanDrug = drugName
+    .replace(/\d+(\.\d+)?\s*(mg|g|ml|mcg|iu|tablet|capsule|syrup|vial)/gi, '')
+    .trim();
+
+  // Primary active ingredient word
+  const searchName = cleanDrug || drugName.split(' ')[0].trim();
 
   try {
-    const fdaRes = await fetch(
-      `https://api.fda.gov/drug/label.json?search=openfda.generic_name:"${encodeURIComponent(genericName)}"&limit=1`,
+    // Attempt 1: Search by generic_name
+    let fdaRes = await fetch(
+      `https://api.fda.gov/drug/label.json?search=openfda.generic_name:"${encodeURIComponent(searchName)}"${process.env.OPENFDA_API_KEY ? `&api_key=${process.env.OPENFDA_API_KEY}` : ''}&limit=1`,
       { cache: 'no-store' }
     );
+
+    // Attempt 2: Fallback search by general query if generic_name yields 404
+    if (!fdaRes.ok) {
+      fdaRes = await fetch(
+        `https://api.fda.gov/drug/label.json?search="${encodeURIComponent(searchName)}"${process.env.OPENFDA_API_KEY ? `&api_key=${process.env.OPENFDA_API_KEY}` : ''}&limit=1`,
+        { cache: 'no-store' }
+      );
+    }
 
     if (!fdaRes.ok) return null;
 
     const fdaData = await fdaRes.json();
     const result = fdaData.results?.[0];
 
-    // Priority order for safety warnings
+    // Priority order for safety warnings: Boxed Warnings > Contraindications > Warnings
     const warningText =
       result?.boxed_warning?.[0] ||
       result?.contraindications?.[0] ||
@@ -34,10 +48,10 @@ async function fetchFDASafetyNotice(drugName: string): Promise<string | null> {
 
     if (!warningText) return null;
 
-    // Truncate long FDA text for display clean-up
+    // Truncate long FDA text cleanly for display on UI card
     return warningText.length > 280 ? warningText.slice(0, 277) + '...' : warningText;
   } catch (err) {
-    console.warn(`openFDA fetch failed dynamically for ${genericName}:`, err);
+    console.warn(`[openFDA Warning] Fetch failed dynamically for ${searchName}:`, err);
     return null;
   }
 }
@@ -125,12 +139,14 @@ State PHC inventory availability status for essential medicines under National E
       ],
     });
 
-    const responseText = result.response?.candidates?.[0]?.content?.parts?.[0]?.text;
+    let responseText = result.response?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!responseText) {
       throw new Error('Empty response from Prescribe-Agent model.');
     }
 
-    const prescriptionPlan = JSON.parse(responseText.trim());
+    // Clean markdown wrappers if present
+    responseText = responseText.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+    const prescriptionPlan = JSON.parse(responseText);
 
     // ── 4. Dynamic openFDA Fetch Step ──────────────────────────────
     // Dynamically pull the primary drug prescribed by Gemini
