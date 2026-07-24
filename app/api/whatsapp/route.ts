@@ -116,7 +116,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const triageUrl = new URL('/api/triage', request.url).toString();
+    const baseUrl = process.env.INTERNAL_API_URL || 'http://localhost:3000';
+    const triageUrl = `${baseUrl}/api/triage`;
     const triageResponse = await fetch(triageUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -145,7 +146,7 @@ ${triageData.reply}`;
     let prescribeSummary = '';
 
     if (triageData.isComplete || incoming.hasAttachment) {
-      const diagnoseUrl = new URL('/api/diagnose', request.url).toString();
+      const diagnoseUrl = `${baseUrl}/api/diagnose`;
       const diagnoseResponse = await fetch(diagnoseUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -163,7 +164,7 @@ ${triageData.reply}`;
           whatsappReply += `\n\nDiagnose-Agent probable diagnosis:\n- ${primary.condition_name} (${primary.confidence_score || 'unknown confidence'})`;
         }
 
-        const prescribeUrl = new URL('/api/prescribe', request.url).toString();
+        const prescribeUrl = `${baseUrl}/api/prescribe`;
         const prescribeResponse = await fetch(prescribeUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

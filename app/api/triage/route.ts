@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { VertexAI, FunctionDeclarationSchemaType } from '@google-cloud/vertexai';
 
 // Initialize GCP Project parameters from your environment variables
-const project = process.env.GCP_PROJECT_ID || 'your-gcp-project-id';
+const project = process.env.GCP_PROJECT_ID || '';
 const location = process.env.GCP_LOCATION || 'us-central1';
 
 const vertexAI = new VertexAI({ project, location });
