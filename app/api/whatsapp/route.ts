@@ -211,39 +211,62 @@ export async function POST(request: Request) {
     const body = await request.json();
     const incoming = parseWhatsappWebhook(body);
     if (!incoming) {
-      return NextResponse.json(
-        { success: false, error: 'Invalid WhatsApp webhook payload.' },
-        { status: 400 }
-      );
+      // Still return 200 for non-message webhooks (status updates, etc.) to prevent Meta retries
+      return NextResponse.json({ success: true, ignored: true });
     }
 
     console.log(`📱 [WHATSAPP INCOMING] From: ${incoming.from} | Message: "${incoming.messageText}" | Attachment: ${incoming.hasAttachment}`);
 
     // Deduplicate: skip if this message was already processed
     if (incoming.messageId && isMessageProcessed(incoming.messageId)) {
+      console.log(`⏭️ [DEDUPLICATED] Message ${incoming.messageId} already processed, skipping.`);
       return NextResponse.json({ success: true, deduplicated: true });
     }
 
+    // IMPORTANT: Fire off message processing in the background WITHOUT awaiting it.
+    // Return 200 OK to Meta immediately so they don't retry the webhook (which causes duplicate responses).
+    processWhatsappMessage(incoming).catch((err) => {
+      console.error('Background WhatsApp processing error:', err);
+    });
+
+    // Immediately acknowledge to Meta — prevents retry/duplicate messages
+    return NextResponse.json({ success: true, acknowledged: true });
+
+  } catch (error: any) {
+    console.error('WhatsApp webhook parsing error:', error);
+    // Return 200 even on errors to prevent Meta from retrying
+    return NextResponse.json({ success: true, error: error.message });
+  }
+}
+
+// ─── Background message processing (runs after 200 OK is returned to Meta) ───
+async function processWhatsappMessage(incoming: {
+  from: string;
+  phoneNumberId: string | undefined;
+  messageText: string;
+  hasAttachment: boolean;
+  mediaId: string | null;
+  messageId: string;
+}) {
+  try {
     // Download image if present, or transcribe audio
     let imageBase64: string | undefined;
     let messageText = incoming.messageText;
 
     if (incoming.hasAttachment && incoming.mediaId) {
       if (incoming.messageText.includes('audio message')) {
-        // Transcribe audio to text using Gemini
         const transcription = await transcribeAudio(incoming.mediaId);
         if (transcription) {
           messageText = transcription;
-          incoming.hasAttachment = false; // Treat as text now
+          incoming.hasAttachment = false;
         }
       } else {
-        // Download image
         const downloaded = await downloadWhatsappMedia(incoming.mediaId);
         if (downloaded) imageBase64 = downloaded;
       }
     }
 
-    // Detect conversational closers — don't restart triage for these
+    // Detect conversational closers
     const closerPatterns = /^(ok|okay|alright|thanks|thank you|thankyou|dhanyavad|shukriya|bye|theek hai|thik hai|accha|got it|noted|hmm|haan|ji|good)\s*[.!]?$/i;
     if (closerPatterns.test(messageText.trim())) {
       const closingReply = 'Thank you for using Nirog Setu AI. If you need medical assistance in the future, feel free to message anytime. Take care! 🙏';
@@ -251,11 +274,11 @@ export async function POST(request: Request) {
       if (phoneNumberId) {
         await sendWhatsappText(phoneNumberId, incoming.from, closingReply);
       }
-      return NextResponse.json({ success: true, closingMessage: true });
+      return;
     }
 
     const baseUrl = process.env.INTERNAL_API_URL || 'http://localhost:3000';
-    const adkServiceUrl = process.env.ADK_SERVICE_URL; // e.g., http://localhost:8080
+    const adkServiceUrl = process.env.ADK_SERVICE_URL;
 
     let whatsappReply = '';
     let diagnoseReport: any = null;
@@ -363,7 +386,7 @@ export async function POST(request: Request) {
       }
     }
 
-    // Guarantee a response: If all AI services failed or returned empty, provide a welcoming fallback message
+    // Guarantee a response
     if (!whatsappReply) {
       const greetingPatterns = /^(hello|hi|hey|namaste|pranam|greetings|hola|good morning|good evening|good afternoon)\b/i;
       if (greetingPatterns.test(messageText.trim())) {
@@ -374,37 +397,17 @@ export async function POST(request: Request) {
     }
 
     const phoneNumberId = incoming.phoneNumberId || WHATSAPP_PHONE_NUMBER_ID;
-    let sentToWhatsApp = false;
-    let sendError: string | null = null;
-
     if (phoneNumberId) {
       try {
         await sendWhatsappText(phoneNumberId, incoming.from, whatsappReply);
-        sentToWhatsApp = true;
+        console.log(`💬 [WHATSAPP OUTGOING] To: ${incoming.from} | Reply sent successfully.\nReply text:\n${whatsappReply}\n---`);
       } catch (error: any) {
-        console.error('Failed to send WhatsApp reply message:', error);
-        sendError = error.message;
+        console.error(`❌ [WHATSAPP SEND FAILED] To: ${incoming.from} | Error: ${error.message}`);
       }
     }
-
-    console.log(`💬 [WHATSAPP OUTGOING] To: ${incoming.from} | Sent: ${sentToWhatsApp} | Error: ${sendError || 'None'}\nReply text:\n${whatsappReply}\n---`);
-
-    return NextResponse.json({
-      success: true,
-      whatsappWebhook: true,
-      sentToWhatsApp,
-      sendError,
-      triageData,
-      diagnoseReport,
-      prescribeSummary,
-      whatsappReply,
-    });
   } catch (error: any) {
-    console.error('WhatsApp webhook processing error:', error);
-    return NextResponse.json(
-      { success: false, error: error.message || 'WhatsApp webhook processing failure.' },
-      { status: 500 }
-    );
+    console.error('processWhatsappMessage fatal error:', error);
   }
 }
+
 
