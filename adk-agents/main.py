@@ -4,6 +4,7 @@ FastAPI server exposing ADK agents as HTTP endpoints for Cloud Run deployment.
 """
 
 import os
+import base64
 import asyncio
 from contextlib import asynccontextmanager
 
@@ -137,7 +138,9 @@ async def chat(request: ChatRequest):
                     mime_type = "image/png"
                 elif "pdf" in header:
                     mime_type = "application/pdf"
-            parts.append(types.Part(inline_data=types.Blob(data=clean_base64, mime_type=mime_type)))
+            # Blob.data requires bytes, not a base64 string — decode first
+            image_bytes = base64.b64decode(clean_base64)
+            parts.append(types.Part.from_bytes(data=image_bytes, mime_type=mime_type))
 
         content = types.Content(role="user", parts=parts)
 
