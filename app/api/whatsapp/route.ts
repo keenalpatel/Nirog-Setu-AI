@@ -217,6 +217,8 @@ export async function POST(request: Request) {
       );
     }
 
+    console.log(`📱 [WHATSAPP INCOMING] From: ${incoming.from} | Message: "${incoming.messageText}" | Attachment: ${incoming.hasAttachment}`);
+
     // Deduplicate: skip if this message was already processed
     if (incoming.messageId && isMessageProcessed(incoming.messageId)) {
       return NextResponse.json({ success: true, deduplicated: true });
@@ -384,6 +386,8 @@ export async function POST(request: Request) {
         sendError = error.message;
       }
     }
+
+    console.log(`💬 [WHATSAPP OUTGOING] To: ${incoming.from} | Sent: ${sentToWhatsApp} | Error: ${sendError || 'None'}\nReply text:\n${whatsappReply}\n---`);
 
     return NextResponse.json({
       success: true,
