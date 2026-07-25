@@ -1,0 +1,34 @@
+steps:
+# Build the Docker image
+- name: 'gcr.io/cloud-builders/docker'
+  args: [ 'build', '-t', 'gcr.io/$PROJECT_ID/nirog-setu-adk-agents', './adk-agents' ]
+
+# Push to Container Registry
+- name: 'gcr.io/cloud-builders/docker'
+  args: [ 'push', 'gcr.io/$PROJECT_ID/nirog-setu-adk-agents' ]
+
+# Deploy to Cloud Run
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  entrypoint: gcloud
+  args:
+  - 'run'
+  - 'deploy'
+  - 'nirog-setu-adk-agents'
+  - '--image'
+  - 'gcr.io/$PROJECT_ID/nirog-setu-adk-agents'
+  - '--region'
+  - 'us-central1'
+  - '--platform'
+  - 'managed'
+  - '--allow-unauthenticated'
+  - '--memory'
+  - '1Gi'
+  - '--cpu'
+  - '2'
+  - '--timeout'
+  - '300'
+  - '--set-env-vars'
+  - 'GCP_PROJECT_ID=$PROJECT_ID,GCP_LOCATION=us-central1'
+
+images:
+- 'gcr.io/$PROJECT_ID/nirog-setu-adk-agents'

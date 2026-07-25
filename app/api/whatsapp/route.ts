@@ -241,76 +241,110 @@ export async function POST(request: Request) {
       }
     }
 
+    // Detect conversational closers — don't restart triage for these
+    const closerPatterns = /^(ok|okay|alright|thanks|thank you|thankyou|dhanyavad|shukriya|bye|theek hai|thik hai|accha|got it|noted|hmm|haan|ji|good)\s*[.!]?$/i;
+    if (closerPatterns.test(messageText.trim())) {
+      const closingReply = 'Thank you for using Nirog Setu AI. If you need medical assistance in the future, feel free to message anytime. Take care! 🙏';
+      const phoneNumberId = incoming.phoneNumberId || WHATSAPP_PHONE_NUMBER_ID;
+      if (phoneNumberId) {
+        await sendWhatsappText(phoneNumberId, incoming.from, closingReply);
+      }
+      return NextResponse.json({ success: true, closingMessage: true });
+    }
+
     const baseUrl = process.env.INTERNAL_API_URL || 'http://localhost:3000';
-    const triageUrl = `${baseUrl}/api/triage`;
-    const triageResponse = await fetch(triageUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: messageText,
-        imageBase64: imageBase64,
-        history: [{ type: 'user', content: messageText }],
-      }),
-    });
+    const adkServiceUrl = process.env.ADK_SERVICE_URL; // e.g., http://localhost:8080
 
-    const triageData = await triageResponse.json();
-    if (!triageResponse.ok || !triageData) {
-      return NextResponse.json(
-        { success: false, error: triageData?.error || 'Triage route failed.' },
-        { status: triageResponse.status || 500 }
-      );
-    }
-
-    let whatsappReply = `Triage Assistant:
-${triageData.reply}`;
-    if (triageData?.translation && triageData.detectedLanguage?.toLowerCase() !== 'english') {
-      whatsappReply += `\n\nEnglish translation:\n${triageData.translation}`;
-    }
-
+    let whatsappReply = '';
     let diagnoseReport: any = null;
     let prescribeSummary = '';
+    let triageData: any = null;
 
-    if (triageData.isComplete || incoming.hasAttachment) {
-      const diagnoseUrl = `${baseUrl}/api/diagnose`;
-      const diagnoseResponse = await fetch(diagnoseUrl, {
+    if (adkServiceUrl) {
+      // ─── Track 1+2: Use ADK Agent Service (orchestrator handles full pipeline) ───
+      const adkResponse = await fetch(`${adkServiceUrl}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          history: [{ type: 'user', content: messageText }],
-          imageBase64: imageBase64,
+          message: messageText,
+          user_id: incoming.from,
+          session_id: `wa_${incoming.from}`,
+          image_base64: imageBase64 || null,
         }),
       });
 
-      const diagnoseData = await diagnoseResponse.json();
-      if (diagnoseResponse.ok && diagnoseData?.success) {
-        diagnoseReport = diagnoseData.report;
-        const primary = diagnoseReport?.differential_diagnoses?.[0];
-        if (primary) {
-          whatsappReply += `\n\nDiagnose-Agent probable diagnosis:\n- ${primary.condition_name} (${primary.confidence_score || 'unknown confidence'})`;
-        }
+      const adkData = await adkResponse.json();
+      if (adkResponse.ok && adkData?.reply) {
+        whatsappReply = adkData.reply;
+        triageData = { reply: adkData.reply, isComplete: true };
+      } else {
+        whatsappReply = 'Sorry, I encountered an issue processing your request. Please try again.';
+      }
+    } else {
+      // ─── Fallback: Use Next.js internal routes (original pipeline) ───
+      const triageUrl = `${baseUrl}/api/triage`;
+      const triageResponse = await fetch(triageUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: messageText,
+          imageBase64: imageBase64,
+          history: [{ type: 'user', content: messageText }],
+        }),
+      });
 
-        const prescribeUrl = `${baseUrl}/api/prescribe`;
-        const prescribeResponse = await fetch(prescribeUrl, {
+      triageData = await triageResponse.json();
+      if (!triageResponse.ok || !triageData) {
+        return NextResponse.json(
+          { success: false, error: triageData?.error || 'Triage route failed.' },
+          { status: triageResponse.status || 500 }
+        );
+      }
+
+      whatsappReply = `Triage Assistant:\n${triageData.reply}`;
+
+      if (triageData.isComplete || incoming.hasAttachment) {
+        const diagnoseUrl = `${baseUrl}/api/diagnose`;
+        const diagnoseResponse = await fetch(diagnoseUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            diagnosticReport: diagnoseReport,
-            patientAge: 30,
-            allergies: [],
+            history: [{ type: 'user', content: messageText }],
+            imageBase64: imageBase64,
           }),
         });
 
-        const prescribeData = await prescribeResponse.json();
-        if (prescribeResponse.ok && prescribeData?.success) {
-          const meds = prescribeData.prescription?.prescriptions || [];
-          if (meds.length > 0) {
-            prescribeSummary = meds
-              .slice(0, 3)
-              .map((item: any, index: number) =>
-                `${index + 1}. ${item.medication_name} - ${item.dosage}, ${item.frequency}, ${item.duration}`
-              )
-              .join('\n');
-            whatsappReply += `\n\nPrescribe-Agent Suggested Medications:\n${prescribeSummary}`;
+        const diagnoseData = await diagnoseResponse.json();
+        if (diagnoseResponse.ok && diagnoseData?.success) {
+          diagnoseReport = diagnoseData.report;
+          const primary = diagnoseReport?.differential_diagnoses?.[0];
+          if (primary) {
+            whatsappReply += `\n\nDiagnose-Agent probable diagnosis:\n- ${primary.condition_name} (${primary.confidence_score || 'unknown confidence'})`;
+          }
+
+          const prescribeUrl = `${baseUrl}/api/prescribe`;
+          const prescribeResponse = await fetch(prescribeUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              diagnosticReport: diagnoseReport,
+              patientAge: 30,
+              allergies: [],
+            }),
+          });
+
+          const prescribeData = await prescribeResponse.json();
+          if (prescribeResponse.ok && prescribeData?.success) {
+            const meds = prescribeData.prescription?.prescriptions || [];
+            if (meds.length > 0) {
+              prescribeSummary = meds
+                .slice(0, 3)
+                .map((item: any, index: number) =>
+                  `${index + 1}. ${item.medication_name} - ${item.dosage}, ${item.frequency}, ${item.duration}`
+                )
+                .join('\n');
+              whatsappReply += `\n\nPrescribe-Agent Suggested Medications:\n${prescribeSummary}`;
+            }
           }
         }
       }

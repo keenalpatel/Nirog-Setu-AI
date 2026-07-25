@@ -21,10 +21,13 @@ export async function POST(request: Request) {
       ],
     };
 
+    const reply = `Emergency services have been contacted. An ambulance (Ticket: ${emergencyPayload.sosTicketId}) is on its way — estimated arrival in ${emergencyPayload.etaMinutes} minutes. While you wait: ${emergencyPayload.firstAidInstructions.slice(0, 2).join(' ')} Stay calm and keep emergency contacts ready.`;
+
     console.warn('[Emergency-Agent] 108 SOS TRIGGERED:', emergencyPayload);
 
     return NextResponse.json({
       success: true,
+      reply,
       emergency: emergencyPayload,
     });
   } catch (error: any) {
