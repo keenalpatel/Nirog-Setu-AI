@@ -215,10 +215,10 @@ export default function ChatPage() {
           const urgency = (report.triage_urgency_level || report.urgency || 'Moderate').toString();
           const primaryDiag = report.primary_diagnosis || report.diagnosis || report.condition || 'General Diagnostic Assessment';
 
-          let prescribeData = null;
-          let referData = null;
-          let ashaData = null;
-          let emergencyData = null;
+          let prescribeData: any = null;
+          let referData: any = null;
+          let ashaData: any = null;
+          let emergencyData: any = null;
 
           try {
             // 1. Prescribe-Agent
