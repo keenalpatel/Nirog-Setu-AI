@@ -6,6 +6,21 @@ const WHATSAPP_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'whatsapp_ver
 const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || '';
 const WHATSAPP_API_VERSION = process.env.WHATSAPP_API_VERSION || 'v25.0';
 
+// Message deduplication: track processed message IDs to prevent duplicate responses
+const processedMessages = new Set<string>();
+const MAX_PROCESSED_CACHE = 1000;
+
+function isMessageProcessed(messageId: string): boolean {
+  if (processedMessages.has(messageId)) return true;
+  processedMessages.add(messageId);
+  // Prevent memory leak by clearing old entries
+  if (processedMessages.size > MAX_PROCESSED_CACHE) {
+    const firstEntry = processedMessages.values().next().value;
+    if (firstEntry) processedMessages.delete(firstEntry);
+  }
+  return false;
+}
+
 function loadWhatsappToken(): string | null {
   if (process.env.WHATSAPP_TOKEN?.trim()) return process.env.WHATSAPP_TOKEN.trim();
 
@@ -35,27 +50,113 @@ function parseWhatsappWebhook(body: any) {
     phoneNumberId: string | undefined;
     messageText: string;
     hasAttachment: boolean;
+    mediaId: string | null;
+    messageId: string;
   } = {
     from: message.from,
     phoneNumberId: metadata?.phone_number_id,
     messageText: '',
     hasAttachment: false,
+    mediaId: null,
+    messageId: message.id || '',
   };
 
   if (message.type === 'text' && message.text?.body) {
     parsed.messageText = message.text.body;
   } else if (message.type === 'image') {
-    parsed.messageText = 'Patient sent an image attachment via WhatsApp.';
+    parsed.messageText = message.image?.caption || 'Patient sent an X-ray/medical image for diagnosis.';
     parsed.hasAttachment = true;
+    parsed.mediaId = message.image?.id || null;
   } else if (message.type === 'audio') {
     parsed.messageText = 'Patient sent an audio message via WhatsApp.';
     parsed.hasAttachment = true;
+    parsed.mediaId = message.audio?.id || null;
   } else {
     parsed.messageText = `Received a WhatsApp ${message.type} message.`;
     parsed.hasAttachment = message.type !== 'text';
   }
 
   return parsed;
+}
+
+async function downloadWhatsappMedia(mediaId: string): Promise<string | null> {
+  const token = loadWhatsappToken();
+  if (!token || !mediaId) return null;
+
+  try {
+    // Step 1: Get media URL from WhatsApp
+    const mediaInfoRes = await fetch(
+      `https://graph.facebook.com/${WHATSAPP_API_VERSION}/${mediaId}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!mediaInfoRes.ok) return null;
+    const mediaInfo = await mediaInfoRes.json();
+    const mediaUrl = mediaInfo.url;
+    if (!mediaUrl) return null;
+
+    // Step 2: Download the actual media binary
+    const mediaRes = await fetch(mediaUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!mediaRes.ok) return null;
+
+    const arrayBuffer = await mediaRes.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString('base64');
+    const mimeType = mediaRes.headers.get('content-type') || 'image/jpeg';
+    return `data:${mimeType};base64,${base64}`;
+  } catch (error) {
+    console.error('Failed to download WhatsApp media:', error);
+    return null;
+  }
+}
+
+async function transcribeAudio(mediaId: string): Promise<string | null> {
+  const token = loadWhatsappToken();
+  if (!token || !mediaId) return null;
+
+  try {
+    // Download audio from WhatsApp
+    const mediaInfoRes = await fetch(
+      `https://graph.facebook.com/${WHATSAPP_API_VERSION}/${mediaId}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!mediaInfoRes.ok) return null;
+    const mediaInfo = await mediaInfoRes.json();
+    const mediaUrl = mediaInfo.url;
+    if (!mediaUrl) return null;
+
+    const audioRes = await fetch(mediaUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!audioRes.ok) return null;
+
+    const arrayBuffer = await audioRes.arrayBuffer();
+    const base64Audio = Buffer.from(arrayBuffer).toString('base64');
+    const mimeType = audioRes.headers.get('content-type') || 'audio/ogg';
+
+    // Use Vertex AI Gemini to transcribe the audio
+    const project = process.env.GCP_PROJECT_ID || '';
+    const location = process.env.GCP_LOCATION || 'us-central1';
+    const { VertexAI } = await import('@google-cloud/vertexai');
+    const vertexAI = new VertexAI({ project, location });
+    const model = vertexAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+    const result = await model.generateContent({
+      contents: [{
+        role: 'user',
+        parts: [
+          { inlineData: { data: base64Audio, mimeType } },
+          { text: 'Transcribe this audio message exactly as spoken. Output ONLY the transcribed text, nothing else. If the audio is in Hindi, Marathi, Telugu, or any other language, transcribe it in that language using the original script.' }
+        ]
+      }]
+    });
+
+    const transcription = result.response?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    return transcription || null;
+  } catch (error) {
+    console.error('Audio transcription failed:', error);
+    return null;
+  }
 }
 
 async function sendWhatsappText(phoneNumberId: string, to: string, bodyText: string) {
@@ -116,15 +217,39 @@ export async function POST(request: Request) {
       );
     }
 
+    // Deduplicate: skip if this message was already processed
+    if (incoming.messageId && isMessageProcessed(incoming.messageId)) {
+      return NextResponse.json({ success: true, deduplicated: true });
+    }
+
+    // Download image if present, or transcribe audio
+    let imageBase64: string | undefined;
+    let messageText = incoming.messageText;
+
+    if (incoming.hasAttachment && incoming.mediaId) {
+      if (incoming.messageText.includes('audio message')) {
+        // Transcribe audio to text using Gemini
+        const transcription = await transcribeAudio(incoming.mediaId);
+        if (transcription) {
+          messageText = transcription;
+          incoming.hasAttachment = false; // Treat as text now
+        }
+      } else {
+        // Download image
+        const downloaded = await downloadWhatsappMedia(incoming.mediaId);
+        if (downloaded) imageBase64 = downloaded;
+      }
+    }
+
     const baseUrl = process.env.INTERNAL_API_URL || 'http://localhost:3000';
     const triageUrl = `${baseUrl}/api/triage`;
     const triageResponse = await fetch(triageUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        message: incoming.messageText,
-        imageBase64: incoming.hasAttachment ? undefined : undefined,
-        history: [{ type: 'user', content: incoming.messageText }],
+        message: messageText,
+        imageBase64: imageBase64,
+        history: [{ type: 'user', content: messageText }],
       }),
     });
 
@@ -151,8 +276,8 @@ ${triageData.reply}`;
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          history: [{ type: 'user', content: incoming.messageText }],
-          imageBase64: incoming.hasAttachment ? undefined : undefined,
+          history: [{ type: 'user', content: messageText }],
+          imageBase64: imageBase64,
         }),
       });
 

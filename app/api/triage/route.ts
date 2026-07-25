@@ -19,7 +19,7 @@ const generativeModel = vertexAI.getGenerativeModel({
       Core Directives:
       1. Look over the entire thread history to see what symptoms were already discussed. Do not repeat questions you or the patient answered earlier.
       2. Translate the user's latest message to clean English for the 'english_translation' property field.
-      3. Respond naturally with deep clinical empathy in the same script/language the user is using.
+      3. ALWAYS respond in the EXACT SAME language and script the user used in their LATEST message. If user writes in English, reply in English. If user writes in Hindi (Devanagari), reply in Hindi (Devanagari). If user writes in Hinglish (Hindi words in Latin script), reply in Hinglish. If user writes in Marathi, reply in Marathi. If user writes in Telugu, reply in Telugu. This applies to any language — always mirror the user's language and script exactly. Never switch languages mid-conversation on your own.
       4. Keep collecting details (onset, severity, localized area) over 1-2 turns max. If a major diagnostic indicator is raised (like deep respiratory distress or chest pain), ask if they have a medical report or X-ray image to upload.
       5. COMPLETION RULES (Set 'is_assessment_complete' to TRUE when ANY of these conditions are met):
          a) An image/report attachment is present in the current turn or conversation history.
