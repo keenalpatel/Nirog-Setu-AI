@@ -9,6 +9,17 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
+
+load_dotenv()
+
+# Set Vertex AI defaults for Google GenAI SDK if GEMINI_API_KEY is not set
+if not os.getenv("GEMINI_API_KEY") and not os.getenv("GOOGLE_API_KEY"):
+    os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "true"
+    if "GOOGLE_CLOUD_PROJECT" not in os.environ:
+        os.environ["GOOGLE_CLOUD_PROJECT"] = os.getenv("GCP_PROJECT_ID", "project-3d39fa0c-2d6a-41aa-948")
+    if "GOOGLE_CLOUD_LOCATION" not in os.environ:
+        os.environ["GOOGLE_CLOUD_LOCATION"] = os.getenv("GCP_LOCATION", "us-central1")
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
