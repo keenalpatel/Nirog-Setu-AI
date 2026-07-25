@@ -603,127 +603,206 @@ export default function ChatPage() {
               );
             }
 
-            if (msg.type === 'diagnosis_card' && msg.diagnosisData) {
-              const report = msg.diagnosisData;
-              const rx = msg.prescriptionData;
-              const ref = msg.referralData;
-              const asha = msg.ashaData;
-              const sos = msg.emergencyData;
+if (msg.type === 'diagnosis_card' && msg.diagnosisData) {
+  const report = msg.diagnosisData;
+  const rx = msg.prescriptionData;
+  const ref = msg.referralData;
+  const asha = msg.ashaData;
+  const sos = msg.emergencyData;
 
-              const conditionName = report.primary_diagnosis || report.diagnosis || 'Diagnosis Complete';
-              const urgency = report.triage_urgency_level || report.urgency || 'Moderate';
+  const conditionName = report.primary_diagnosis || 'Diagnosis Complete';
+  const confidenceScore = report.diagnostic_confidence_percentage || 85;
+  const urgency = report.triage_urgency_level || 'Moderate';
 
-              return (
-                <div key={msg.id} className="flex w-full justify-start animate-fade my-2">
-                  <div className="w-full max-w-2xl bg-neutral-900/90 border border-red-500/30 rounded-2xl overflow-hidden shadow-2xl backdrop-blur-md">
-                    
-                    {/* Header with Urgency Badge */}
-                    <div className="bg-red-500/10 border-b border-red-500/20 px-6 py-4 flex items-center justify-between">
-                      <h4 className="text-red-400 font-bold text-sm tracking-wider uppercase flex items-center gap-2">
-                        <span className="w-2.5 h-2.5 rounded-full bg-red-400 animate-pulse" /> Multi-Agent Diagnostic Report
-                      </h4>
-                      <span className={`text-xs font-mono px-3 py-1 rounded-full border font-semibold uppercase ${
-                        urgency.toLowerCase() === 'critical' ? 'bg-red-600 text-white border-red-400 animate-pulse' :
-                        urgency.toLowerCase() === 'high' ? 'bg-red-950/80 text-red-400 border-red-500/40' :
-                        'bg-amber-950/80 text-amber-400 border-amber-500/40'
-                      }`}>
-                        {urgency} Urgency
-                      </span>
-                    </div>
+  return (
+    <div key={msg.id} className="flex w-full justify-start animate-fade my-2">
+      <div className="w-full max-w-2xl bg-neutral-900/90 border border-indigo-500/30 rounded-2xl overflow-hidden shadow-2xl backdrop-blur-md">
+        
+        {/* Header with Urgency Badge */}
+        <div className="bg-indigo-500/10 border-b border-indigo-500/20 px-6 py-4 flex items-center justify-between">
+          <h4 className="text-indigo-300 font-bold text-sm tracking-wider uppercase flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-indigo-400 animate-pulse" /> Multi-Agent Diagnostic Report
+          </h4>
+          <span className={`text-xs font-mono px-3 py-1 rounded-full border font-semibold uppercase ${
+            urgency.toLowerCase() === 'critical' ? 'bg-red-600 text-white border-red-400 animate-pulse' :
+            urgency.toLowerCase() === 'high' ? 'bg-red-950/80 text-red-400 border-red-500/40' :
+            'bg-amber-950/80 text-amber-400 border-amber-500/40'
+          }`}>
+            {urgency} Urgency
+          </span>
+        </div>
 
-                    <div className="p-6 space-y-5 text-sm text-left">
-                      
-                      {/* 1. Primary Condition */}
-                      <div className="bg-black/60 p-4 rounded-xl border border-white/10 space-y-1">
-                        <div className="text-[10px] uppercase font-mono tracking-wider text-gray-400">Primary Diagnosis Summary</div>
-                        <h3 className="text-lg font-bold text-red-400">{conditionName}</h3>
+        <div className="p-6 space-y-5 text-sm text-left">
+          
+          {/* 1. Primary Diagnosis & Confidence Score */}
+          <div className="bg-black/60 p-4 rounded-xl border border-white/10 space-y-2">
+            <div className="flex justify-between items-center">
+              <div className="text-[10px] uppercase font-mono tracking-wider text-gray-400">Primary Diagnosis Summary</div>
+              <div className="text-xs font-mono text-emerald-400 font-bold">{confidenceScore}% Confidence</div>
+            </div>
+            <h3 className="text-lg font-bold text-indigo-300">{conditionName}</h3>
+            
+            {/* Risk Factors */}
+            {report.identified_risk_factors?.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {report.identified_risk_factors.map((rf: string, idx: number) => (
+                  <span key={idx} className="bg-red-500/10 text-red-300 border border-red-500/20 text-[10px] px-2 py-0.5 rounded-md font-mono">
+                    ⚠️ {rf}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* 2. Differential Diagnoses & ICD-10 Resolution */}
+          {report.differential_diagnoses?.length > 0 && (
+            <div className="bg-black/40 p-4 rounded-xl border border-white/10 space-y-2">
+              <div className="text-[10px] uppercase font-mono tracking-wider text-gray-400">Differential Diagnoses & ICD-10 Verification</div>
+              <div className="space-y-2">
+                {report.differential_diagnoses.map((diff: any, idx: number) => (
+                  <div key={idx} className="bg-white/5 p-2.5 rounded-lg border border-white/5 flex justify-between items-start text-xs">
+                    <div>
+                      <div className="font-semibold text-gray-200">
+                        {diff.condition_name}
+                        {diff.icd_10_code && (
+                          <span className="ml-2 font-mono text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-1.5 py-0.5 rounded">
+                            ICD-10: {diff.icd_10_code}
+                          </span>
+                        )}
                       </div>
-
-                      {/* 2. EMERGENCY-AGENT (Critical SOS Alert) */}
-                      {sos && (
-                        <div className="bg-red-950/60 border border-red-500/60 p-4 rounded-xl space-y-3 animate-pulse">
-                          <div className="flex justify-between items-center text-red-300 font-bold font-mono text-xs uppercase">
-                            <span>🚨 EMERGENCY 108 AMBULANCE DISPATCHED</span>
-                            <span>Ticket: {sos.sosTicketId}</span>
-                          </div>
-                          <p className="text-xs text-white">
-                            Paramedics en route. Estimated arrival in <strong>{sos.etaMinutes} minutes</strong>.
-                          </p>
-                          <div className="bg-black/50 p-3 rounded-lg text-xs space-y-1 text-gray-200">
-                            <div className="font-semibold text-red-400">First-Aid Instructions While Help Is En Route:</div>
-                            <ul className="list-disc pl-4 space-y-1 text-[11px]">
-                              {sos.firstAidInstructions?.map((step: string, i: number) => (
-                                <li key={i}>{step}</li>
-                              ))}
-                            </ul>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* 3. ASHA-AGENT (Community Health Worker Alert) */}
-                      {asha && (
-                        <div className="bg-emerald-950/30 border border-emerald-500/40 p-4 rounded-xl space-y-2">
-                          <div className="flex justify-between items-center">
-                            <span className="text-xs font-mono text-emerald-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" /> ASHA Worker Priority Alert Sent
-                            </span>
-                            <span className="text-[10px] font-mono text-emerald-300/80">ID: {asha.dispatchId}</span>
-                          </div>
-                          <div className="text-xs text-gray-200 space-y-1">
-                            <div><strong>Assigned Worker:</strong> {asha.assignedWorker} ({asha.workerPhone})</div>
-                            <div><strong>Action Status:</strong> {asha.actionRequired}</div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* 4. REFER-AGENT (PHC Referral Mapping) */}
-                      {ref && (
-                        <div className="bg-blue-950/30 border border-blue-500/40 p-4 rounded-xl space-y-2">
-                          <div className="flex justify-between items-center text-xs font-mono text-blue-300 font-bold uppercase tracking-wider">
-                            <span>🏥 Assigned Health Facility Referral</span>
-                            <span>Ref: {ref.referralCode}</span>
-                          </div>
-                          <div className="text-xs text-gray-200 space-y-1">
-                            <div className="font-bold text-white text-sm">{ref.facility}</div>
-                            <div className="text-gray-400">{ref.address} ({ref.distance} away)</div>
-                            <div className="flex gap-4 pt-1 text-[11px] text-blue-200 font-mono">
-                              <span>🛏️ {ref.beds}</span>
-                              <span>👨‍⚕️ {ref.assignedDoctor}</span>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* 5. PRESCRIBE-AGENT Output */}
-                      {rx && rx.prescriptions && rx.prescriptions.length > 0 && (
-                        <div className="bg-emerald-950/20 border border-emerald-500/30 p-4 rounded-xl space-y-3">
-                          <div className="flex justify-between items-center">
-                            <span className="text-xs font-mono text-emerald-400 font-bold uppercase tracking-wider">
-                              💊 Prescribe-Agent Protocol (ICMR Aligned)
-                            </span>
-                          </div>
-                          <div className="space-y-2">
-                            {rx.prescriptions.map((p: any, idx: number) => (
-                              <div key={idx} className="bg-black/50 border border-emerald-500/20 p-3 rounded-lg flex justify-between items-start text-xs">
-                                <div>
-                                  <span className="font-bold text-emerald-300 text-sm block">{p.medication_name}</span>
-                                  <span className="text-gray-400 text-[11px]">{p.purpose || 'Standard Dosage'}</span>
-                                </div>
-                                <div className="text-right font-mono text-emerald-200 text-[11px]">
-                                  <div>{p.dosage} • {p.frequency}</div>
-                                  <div className="text-gray-400">Duration: {p.duration}</div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
+                      <div className="text-[11px] text-gray-400 mt-0.5">{diff.clinical_rationale}</div>
                     </div>
                   </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 3. EMERGENCY-AGENT (Critical SOS Alert) */}
+          {sos && (
+            <div className="bg-red-950/60 border border-red-500/60 p-4 rounded-xl space-y-3 animate-pulse">
+              <div className="flex justify-between items-center text-red-300 font-bold font-mono text-xs uppercase">
+                <span>🚨 EMERGENCY 108 AMBULANCE DISPATCHED</span>
+                <span>Ticket: {sos.sosTicketId}</span>
+              </div>
+              <p className="text-xs text-white">
+                Paramedics en route. Estimated arrival in <strong>{sos.etaMinutes} minutes</strong>.
+              </p>
+              {sos.firstAidInstructions?.length > 0 && (
+                <div className="bg-black/50 p-3 rounded-lg text-xs space-y-1 text-gray-200">
+                  <div className="font-semibold text-red-400">First-Aid Instructions:</div>
+                  <ul className="list-disc pl-4 space-y-1 text-[11px]">
+                    {sos.firstAidInstructions.map((step: string, i: number) => (
+                      <li key={i}>{step}</li>
+                    ))}
+                  </ul>
                 </div>
-              );
-            }
+              )}
+            </div>
+          )}
+
+          {/* 4. ASHA-AGENT */}
+          {asha && (
+            <div className="bg-emerald-950/30 border border-emerald-500/40 p-4 rounded-xl space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-mono text-emerald-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" /> ASHA Worker Priority Alert Sent
+                </span>
+                <span className="text-[10px] font-mono text-emerald-300/80">ID: {asha.dispatchId}</span>
+              </div>
+              <div className="text-xs text-gray-200 space-y-1">
+                <div><strong>Assigned Worker:</strong> {asha.assignedWorker} ({asha.workerPhone})</div>
+                <div><strong>Action Status:</strong> {asha.actionRequired}</div>
+              </div>
+            </div>
+          )}
+
+          {/* 5. REFER-AGENT */}
+          {ref && (
+            <div className="bg-blue-950/30 border border-blue-500/40 p-4 rounded-xl space-y-2">
+              <div className="flex justify-between items-center text-xs font-mono text-blue-300 font-bold uppercase tracking-wider">
+                <span>🏥 Assigned Health Facility Referral</span>
+                <span>Ref: {ref.referralCode}</span>
+              </div>
+              <div className="text-xs text-gray-200 space-y-1">
+                <div className="font-bold text-white text-sm">{ref.facility}</div>
+                <div className="text-gray-400">{ref.address} ({ref.distance} away)</div>
+                <div className="flex gap-4 pt-1 text-[11px] text-blue-200 font-mono">
+                  <span>🛏️ {ref.beds}</span>
+                  <span>👨‍⚕️ {ref.assignedDoctor}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 6. PRESCRIBE-AGENT (With FDA Notices & Drug Interaction Alerts) */}
+          {rx && (
+            <div className="bg-emerald-950/20 border border-emerald-500/30 p-4 rounded-xl space-y-3">
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-mono text-emerald-400 font-bold uppercase tracking-wider">
+                  💊 Prescribe-Agent Protocol (ICMR Aligned)
+                </span>
+                <span className="text-[10px] text-emerald-300/70 font-mono">{rx.phc_pharmacy_status}</span>
+              </div>
+
+              {/* RxNav Interaction Warning Banner */}
+              {rx.live_drug_interaction_alerts?.length > 0 && (
+                <div className="bg-amber-500/10 border border-amber-500/30 p-2.5 rounded-lg text-amber-300 text-xs font-mono space-y-1">
+                  <span className="font-bold block">⚡ RxNav Drug-Drug Interaction Warning:</span>
+                  {rx.live_drug_interaction_alerts.map((alert: string, idx: number) => (
+                    <div key={idx} className="text-[11px]">• {alert}</div>
+                  ))}
+                </div>
+              )}
+
+              {/* openFDA Boxed Warning Banner */}
+              {rx.fda_safety_notice && (
+                <div className="bg-red-500/10 border border-red-500/30 p-2.5 rounded-lg text-red-300 text-[11px] space-y-0.5">
+                  <span className="font-bold block font-mono">🛡️ openFDA Safety Advisory:</span>
+                  <p className="text-gray-300 italic">{rx.fda_safety_notice}</p>
+                </div>
+              )}
+
+              {/* Prescribed Medications */}
+              {rx.prescriptions?.length > 0 && (
+                <div className="space-y-2">
+                  {rx.prescriptions.map((p: any, idx: number) => (
+                    <div key={idx} className="bg-black/50 border border-emerald-500/20 p-3 rounded-lg flex justify-between items-start text-xs">
+                      <div>
+                        <span className="font-bold text-emerald-300 text-sm block">{p.medication_name}</span>
+                        <span className="text-gray-400 text-[11px]">{p.purpose || 'Standard Dosage'}</span>
+                        {p.pediatric_dosage_note && (
+                          <span className="text-amber-300 text-[10px] block mt-0.5 font-mono">👶 {p.pediatric_dosage_note}</span>
+                        )}
+                      </div>
+                      <div className="text-right font-mono text-emerald-200 text-[11px]">
+                        <div>{p.dosage} • {p.frequency}</div>
+                        <div className="text-gray-400">Duration: {p.duration} ({p.route})</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Non-Pharmacological Advice */}
+              {rx.non_pharmacological_advice?.length > 0 && (
+                <div className="bg-black/30 p-3 rounded-lg border border-white/5 text-xs text-gray-300 space-y-1">
+                  <div className="font-bold text-emerald-400 text-[11px]">📋 Supportive Home Care Advice:</div>
+                  <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-gray-400">
+                    {rx.non_pharmacological_advice.map((advice: string, idx: number) => (
+                      <li key={idx}>{advice}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
+        </div>
+      </div>
+    </div>
+  );
+}
 
             const isUser = msg.type === 'user';
             return (
