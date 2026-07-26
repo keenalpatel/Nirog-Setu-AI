@@ -1,0 +1,17 @@
+# Environment & Secret files
+.env
+.env.*
+.env.local
+
+# Documentation files (.md)
+*.md
+**/*.md
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Logs
+*.log
