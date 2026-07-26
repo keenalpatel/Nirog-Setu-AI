@@ -4,6 +4,7 @@ import { Inter, Space_Grotesk } from 'next/font/google';
 import { Providers } from '@/components/providers';
 import { AuthProvider } from '@/lib/auth-context';
 import { AppShell } from '@/components/layout/app-shell';
+import WhatsAppButton from '@/components/ui/whatsapp-button';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -53,6 +54,7 @@ export default function RootLayout({
           <AuthProvider>
             <div className="fixed inset-0 aurora-bg -z-10" />
             <AppShell>{children}</AppShell>
+            <WhatsAppButton />
           </AuthProvider>
         </Providers>
       </body>

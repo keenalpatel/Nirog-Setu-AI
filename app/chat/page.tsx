@@ -13,6 +13,7 @@ interface ChatMessage {
   timestamp: Date;
   translationOriginal?: string;
   translationResult?: string;
+  translationDetectedLang?: string;
   diagnosisData?: any;
   prescriptionData?: any;
   referralData?: any;
@@ -77,6 +78,7 @@ export default function ChatPage() {
   const [isTyping, setIsTyping] = useState(false);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [userTurnCount, setUserTurnCount] = useState(0);
   const [progressValue, setProgressValue] = useState(0);
   const [showProgress, setShowProgress] = useState(false);
   const [dispatchCount, setDispatchCount] = useState('1,824');
@@ -394,14 +396,16 @@ export default function ChatPage() {
 
       const userMsgContent = val || `Patient attached a medical file: ${attachedFileName || 'Image Upload'}`;
       
-      const newLocalUserMsg = { 
-        id: uid(), 
-        type: 'user' as const, 
-        content: val ? userMsgContent : `🩻 ${attachedFileName || 'Attached Medical Image'}`, 
-        timestamp: new Date() 
+      const newLocalUserMsg = {
+        id: uid(),
+        type: 'user' as const,
+        content: val ? userMsgContent : `🩻 ${attachedFileName || 'Attached Medical Image'}`,
+        timestamp: new Date()
       };
       
       setMessages((prev) => [...prev, newLocalUserMsg]);
+      const nextTurnCount = userTurnCount + 1;
+      setUserTurnCount(nextTurnCount);
       
       setInput('');
       setAttachedFileName('');
@@ -425,7 +429,7 @@ export default function ChatPage() {
 
         appendMessage('ai', triageData.reply);
 
-        if (val && triageData.translation && triageData.detectedLanguage !== 'English') {
+        if (triageData.translation && triageData.detectedLanguage?.toLowerCase() !== 'english') {
           setMessages((prev) => [...prev, {
             id: uid(),
             type: 'translation',
@@ -433,10 +437,11 @@ export default function ChatPage() {
             timestamp: new Date(),
             translationOriginal: userMsgContent,
             translationResult: triageData.translation,
+            translationDetectedLang: triageData.detectedLanguage,
           }]);
         }
 
-        if (triageData.isComplete || attachedImage) {
+        if ((triageData.isComplete && nextTurnCount >= 7) || attachedImage) {
           appendBadge('Vertex AI Vision & Gemini 2.5 Multimodal Execution Layer Active');
           setShowProgress(true);
           setProgressValue(0);
@@ -458,7 +463,7 @@ export default function ChatPage() {
         appendMessage('ai', 'Network error communicating with the system core.');
       }
     },
-    [input, attachedImage, attachedFileName, messages, appendMessage, appendBadge, runMultiAgentPipeline],
+    [input, attachedImage, attachedFileName, messages, userTurnCount, appendMessage, appendBadge, runMultiAgentPipeline],
   );
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, type: string) => {
@@ -500,9 +505,19 @@ export default function ChatPage() {
       recognition.stop();
     } else {
       recognition.lang =
-        patientLang === 'Hindi' ? 'hi-IN' :
-        patientLang === 'Bhojpuri' ? 'hi-IN' :
-        'en-US';
+        patientLang === 'Hindi'     ? 'hi-IN' :
+        patientLang === 'Bhojpuri'  ? 'bho-IN' :
+        patientLang === 'Telugu'    ? 'te-IN' :
+        patientLang === 'Tamil'     ? 'ta-IN' :
+        patientLang === 'Marathi'   ? 'mr-IN' :
+        patientLang === 'Bengali'   ? 'bn-IN' :
+        patientLang === 'Kannada'   ? 'kn-IN' :
+        patientLang === 'Malayalam' ? 'ml-IN' :
+        patientLang === 'Gujarati'  ? 'gu-IN' :
+        patientLang === 'Odia'      ? 'or-IN' :
+        patientLang === 'Punjabi'   ? 'pa-IN' :
+        patientLang === 'Urdu'      ? 'ur-IN' :
+        'en-IN';
 
       try {
         recognition.start();
@@ -578,7 +593,7 @@ export default function ChatPage() {
                 <div key={msg.id} className="flex w-full justify-start mb-1 animate-fade">
                   <div className="max-w-[78%] bg-white/5 border border-white/10 px-4 py-2 rounded-xl text-xs text-gray-400 italic">
                     <span className="text-indigo-400 font-semibold not-italic block mb-0.5">
-                      🌐 Bhashini translation layer ({patientLang} ➜ English):
+                      🌐 Bhashini translation layer ({msg.translationDetectedLang || patientLang} ➜ English):
                     </span>
                     &ldquo;{msg.translationResult}&rdquo;
                   </div>
@@ -876,19 +891,32 @@ if (msg.type === 'diagnosis_card' && msg.diagnosisData) {
 
             <input ref={inputRef} type="text" value={input} onChange={(e) => setInput(e.target.value)} autoComplete="off" placeholder={attachedFileName ? `Staged: ${attachedFileName}` : "Type your health response query..."} className="bg-transparent flex-grow px-2 py-3 text-sm text-white focus:outline-none placeholder-gray-500 min-w-0" />
 
-            <button 
-              type="button" 
-              onClick={toggleVoice} 
-              title="Click to speak"
-              className={`p-3 transition-all rounded-xl shrink-0 flex items-center justify-center w-11 h-11 ${
-                isListening 
-                  ? 'bg-red-500/20 border border-red-500/50 text-red-400 animate-pulse scale-105 shadow-lg shadow-red-500/20' 
+            <button
+              type="button"
+              onClick={toggleVoice}
+              title={isListening ? 'Stop recording' : 'Click to speak'}
+              aria-label={isListening ? 'Stop voice input' : 'Start voice input'}
+              className={`transition-all rounded-xl shrink-0 flex items-center justify-center w-11 h-11 ${
+                isListening
+                  ? 'bg-red-500/20 border border-red-500/50 text-red-400 shadow-lg shadow-red-500/20'
                   : 'text-gray-400 hover:text-indigo-400 hover:bg-white/5 border border-transparent'
               }`}
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 0 3-3 3 3 0 0 0-3 3v6a3 3 0 0 0 3 3z" />
-              </svg>
+              {isListening ? (
+                /* Stop / recording indicator */
+                <span className="relative flex items-center justify-center w-5 h-5">
+                  <span className="absolute inline-flex w-full h-full rounded-full bg-red-400 opacity-50 animate-ping" />
+                  <span className="relative inline-flex w-3 h-3 rounded-sm bg-red-400" />
+                </span>
+              ) : (
+                /* Standard microphone icon */
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="9" y="2" width="6" height="11" rx="3" />
+                  <path d="M5 10a7 7 0 0 0 14 0" />
+                  <line x1="12" y1="19" x2="12" y2="22" />
+                  <line x1="9" y1="22" x2="15" y2="22" />
+                </svg>
+              )}
             </button>
 
             <button type="submit" className="bg-gradient-to-br from-indigo-500 to-purple-600 p-3 rounded-xl text-white font-medium shadow-md shrink-0 flex items-center justify-center w-11 h-11 transition-all hover:brightness-110">
