@@ -1,9 +1,42 @@
 """ASHA Agent - Community health worker coordination and DOTS tracking."""
 
+import math
+import random
 from google.adk.agents import LlmAgent
 from google.genai import types
 
 from tools.whatsapp import send_whatsapp_message
+
+# Regional ASHA worker database — mirrors app/api/asha/route.ts regionalData
+REGIONAL_ASHA_WORKERS = {
+    "Hindi":    {"worker_name": "Anita Devi (Senior ASHA)",       "contact": "+91 98451 23091", "assigned_center": "Lucknow PHC Hub"},
+    "Bhojpuri": {"worker_name": "Sunita Rai (Community ASHA)",    "contact": "+91 97420 11843", "assigned_center": "Ara Zonal PHC"},
+    "English":  {"worker_name": "Sister Mary D'Souza (ASHA Lead)","contact": "+91 99002 44512", "assigned_center": "Koramangala PHC"},
+    # All other languages fall back to Hindi worker
+}
+
+def get_asha_worker(language: str) -> dict:
+    """Return the ASHA worker record for the given patient language."""
+    return REGIONAL_ASHA_WORKERS.get(language, REGIONAL_ASHA_WORKERS["Hindi"])
+
+def build_asha_dispatch(patient_name: str, patient_lang: str, primary_diagnosis: str, urgency_level: str) -> dict:
+    """Build the structured ASHA dispatch payload — mirrors app/api/asha/route.ts response."""
+    worker = get_asha_worker(patient_lang)
+    dispatch_id = f"ASHA-{random.randint(100000, 999999)}"
+    return {
+        "dispatch_id": dispatch_id,
+        "status": "DISPATCHED_AND_ACKNOWLEDGED",
+        "assigned_worker": worker["worker_name"],
+        "worker_phone": worker["contact"],
+        "assigned_center": worker["assigned_center"],
+        "patient_details": {
+            "name": patient_name,
+            "diagnosis": primary_diagnosis,
+            "urgency": urgency_level,
+        },
+        "action_required": "In-person health check within 4 hours. Initiating DOTS tracking protocol if applicable.",
+    }
+
 
 asha_agent = LlmAgent(
     name="asha_agent",
@@ -36,9 +69,9 @@ TOOL USAGE:
 - Use send_whatsapp_message to alert the assigned ASHA worker about the new case
 
 REGIONAL ASHA WORKER DATABASE:
-- Bihar region: Anita Devi (Senior ASHA), +91 98451 23091, Ara Zonal PHC
-- UP region: Sunita Rai (Community ASHA), +91 97420 11843, Lucknow PHC Hub
-- Default: Sister Mary D'Souza (ASHA Lead), +91 99002 44512, Koramangala PHC
+- Hindi / default region: Anita Devi (Senior ASHA), +91 98451 23091, Lucknow PHC Hub
+- Bhojpuri region: Sunita Rai (Community ASHA), +91 97420 11843, Ara Zonal PHC
+- English / other: Sister Mary D'Souza (ASHA Lead), +91 99002 44512, Koramangala PHC
 
 You MUST output valid JSON and NOTHING else:
 {

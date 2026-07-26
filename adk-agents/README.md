@@ -1,145 +1,129 @@
-# Nirog Setu AI - ADK Agent Service
+# Nirog Setu AI — ADK Agent Service
+
+FastAPI service built on **Google ADK (Agent Development Kit)**, deployable to **Cloud Run**.
+This service **fully replaces** the Next.js `app/api/` routes — all six healthcare agents live
+here and are exposed as REST endpoints that the Next.js frontend calls via `next.config.js` rewrites.
+
+---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Cloud Run (ADK Service)                        │
-│                                                                   │
-│  ┌───────────────────────────────────────────────────────────┐   │
-│  │              Orchestrator Agent (Root)                      │   │
-│  │  Routes patient cases through the pipeline                 │   │
-│  └───────────────┬───────────────────────────────────────────┘   │
-│                  │                                                │
-│  ┌───────┐  ┌───────┐  ┌──────────┐  ┌───────┐  ┌──────────┐  │
-│  │Triage │→ │Diagnose│→ │Prescribe │→ │ Refer │→ │  ASHA    │  │
-│  │Agent  │  │ Agent  │  │  Agent   │  │ Agent │  │  Agent   │  │
-│  └───────┘  └───────┘  └──────────┘  └───────┘  └──────────┘  │
-│       │                                                          │
-│  ┌──────────┐                                                    │
-│  │Emergency │  (activated for CRITICAL severity)                 │
-│  │  Agent   │                                                    │
-│  └──────────┘                                                    │
-│                                                                   │
-│  ┌───────────────────────────────────────────────────────────┐   │
-│  │                    Shared Tools                             │   │
-│  │  • OpenFDA (drug safety)     • UMLS (ICD-10 codes)        │   │
-│  │  • Google Maps (hospitals)   • WhatsApp (messaging)        │   │
-│  └───────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-          ↕ HTTP
-┌─────────────────────────────────────────────────────────────────┐
-│            Next.js Frontend (Netlify / Vercel)                    │
-│  • Patient chat UI       • Admin dashboard                       │
-│  • WhatsApp webhook      • Analytics                             │
-└─────────────────────────────────────────────────────────────────┘
+Next.js Frontend (app/chat/page.tsx)
+        │  (ADK_SERVICE_URL rewrites in next.config.js)
+        ▼
+┌─────────────────────────────────────────────────────────┐
+│               Cloud Run — ADK FastAPI Service           │
+│                                                         │
+│  POST /chat        ← full Triage→Diagnose→Prescribe     │
+│  POST /triage      ← standalone triage                  │
+│  POST /diagnose    ← standalone diagnose                │
+│  POST /prescribe   ← standalone prescribe               │
+│  POST /asha        ← ASHA worker dispatch               │
+│  POST /refer       ← hospital referral                  │
+│  POST /emergency   ← 108 SOS dispatch                   │
+│  GET  /whatsapp    ← webhook verification               │
+│  POST /whatsapp    ← incoming message handler           │
+│  GET  /health      ← Cloud Run health probe             │
+└───────────┬─────────────────────────────────────────────┘
+            │ ADK LlmAgent pipeline
+            ▼
+┌───────────────────────────────────────┐
+│  Orchestrator (nirog_setu_orchestrator)│
+│  ├── triage_agent                     │
+│  ├── diagnose_agent  ← UMLS/NLM tool  │
+│  ├── prescribe_agent ← OpenFDA tool   │
+│  ├── refer_agent     ← Google Maps    │
+│  ├── emergency_agent ← WhatsApp+Maps  │
+│  └── asha_agent      ← WhatsApp tool  │
+└───────────────────────────────────────┘
+            │ MCP tools
+            ▼
+┌───────────────────────────────────────┐
+│  mcp_server.py (stdio MCP server)     │
+│  check_drug_safety    (OpenFDA)       │
+│  check_drug_interaction (OpenFDA)     │
+│  lookup_icd10_code    (UMLS + NLM)    │
+│  find_nearest_hospitals (Google Maps) │
+│  send_whatsapp_message (Meta API)     │
+└───────────────────────────────────────┘
 ```
 
-## Project Structure
+---
 
-```
-adk-agents/
-├── Dockerfile              # Cloud Run container
-├── requirements.txt        # Python dependencies
-├── main.py                 # FastAPI server + ADK Runner
-├── .env.example            # Environment variables template
-├── agents/
-│   ├── __init__.py
-│   ├── orchestrator.py     # Root agent (routes between sub-agents)
-│   ├── triage_agent.py     # Symptom classification + severity
-│   ├── diagnose_agent.py   # Differential diagnosis + ICD-10
-│   ├── prescribe_agent.py  # Treatment protocols + drug safety
-│   ├── refer_agent.py      # Hospital finder + referral
-│   ├── emergency_agent.py  # 108 ambulance dispatch + first-aid
-│   └── asha_agent.py       # ASHA worker coordination + DOTS
-└── tools/
-    ├── __init__.py
-    ├── openfda.py           # FDA drug safety & interactions
-    ├── umls.py              # ICD-10 code lookup (UMLS + NLM)
-    ├── google_maps.py       # Hospital finder (Places API)
-    └── whatsapp.py          # WhatsApp Business messaging
-```
+## API → ADK Migration Map
 
-## API Endpoints
+| Deleted Next.js route          | ADK endpoint       | Notes                               |
+|--------------------------------|--------------------|-------------------------------------|
+| `app/api/triage/route.ts`      | `POST /triage`     | Full multi-turn triage, JSON output |
+| `app/api/diagnose/route.ts`    | `POST /diagnose`   | ICD-10 lookup + guardrails          |
+| `app/api/prescribe/route.ts`   | `POST /prescribe`  | ICMR/NTEP + OpenFDA notice          |
+| `app/api/asha/route.ts`        | `POST /asha`       | Regional worker dispatch            |
+| `app/api/refer/route.ts`       | `POST /refer`      | Regional PHC referral mapping       |
+| `app/api/emergency/route.ts`   | `POST /emergency`  | 108 SOS ticket generation           |
+| `app/api/whatsapp/route.ts`    | `GET+POST /whatsapp` | Full webhook + audio transcription |
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET | `/health` | Health check for Cloud Run |
-| POST | `/chat` | Main chat - routes through full agent pipeline |
-| POST | `/triage` | Direct triage only (bypass orchestrator) |
+`app/api/seed/` and `app/api/stats/` are **not** migrated here — they talk directly to Supabase
+and should remain in Next.js (no LLM logic).
 
-### POST /chat
+---
 
-```json
-{
-  "message": "mujhe 3 din se bukhar hai",
-  "user_id": "918668988741",
-  "session_id": "optional-session-id",
-  "image_base64": "optional-base64-image"
-}
+## Environment Variables
+
+```env
+# GCP / Vertex AI
+GCP_PROJECT_ID=your-project-id
+GCP_LOCATION=us-central1
+GOOGLE_GENAI_USE_VERTEXAI=true   # set automatically when GEMINI_API_KEY is absent
+
+# OR: Direct Gemini API key (for local dev)
+GEMINI_API_KEY=your-key
+
+# Optional integrations
+UMLS_API_KEY=your-umls-key
+GOOGLE_MAPS_API_KEY=your-maps-key
+OPENFDA_API_KEY=your-fda-key     # optional, increases rate limits
+
+# WhatsApp Business API
+WHATSAPP_TOKEN=your-wa-token
+WHATSAPP_PHONE_NUMBER_ID=your-phone-id
+WHATSAPP_VERIFY_TOKEN=whatsapp_verify
+WHATSAPP_API_VERSION=v25.0
 ```
 
-Response:
-```json
-{
-  "reply": "Agent response in patient's language",
-  "session_id": "session_918668988741_12345",
-  "agent_name": "triage_agent",
-  "handoffs": [
-    {"from": "orchestrator", "to": "triage_agent", "event_id": "evt_1"}
-  ],
-  "metadata": {
-    "user_id": "918668988741",
-    "agents_involved": ["triage_agent"]
-  }
-}
-```
+---
 
-## Local Development
+## Running Locally
 
 ```bash
 cd adk-agents
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# or: venv\Scripts\activate  # Windows
-
 pip install -r requirements.txt
-
-# Set environment variables
-cp .env.example .env
-# Edit .env with your values
-
-# Run locally
-python main.py
-# Server starts at http://localhost:8080
+python main.py           # starts on :8080
 ```
 
-## Deploy to Cloud Run
+## Running the MCP server
 
 ```bash
-# Option 1: Using deploy script
-chmod +x deploy.sh
-./deploy.sh
-
-# Option 2: Using Cloud Build
-gcloud builds submit --config=cloudbuild.yaml
-
-# Option 3: Direct gcloud deploy
 cd adk-agents
-gcloud run deploy nirog-setu-adk-agents \
+python mcp_server.py     # stdio mode — connect via Claude Desktop or ADK agent
+```
+
+## Cloud Run Deployment
+
+```bash
+cd adk-agents
+gcloud run deploy nirog-setu-agents \
   --source . \
   --region us-central1 \
-  --allow-unauthenticated
+  --allow-unauthenticated \
+  --set-env-vars GCP_PROJECT_ID=your-project \
+  --port 8080
 ```
 
-## Key Design Decisions
+Once deployed, set in your Next.js environment:
 
-1. **ADK `sub_agents` pattern** - Orchestrator uses `sub_agents` for automatic agent routing instead of manual API calls between Next.js routes.
+```env
+ADK_SERVICE_URL=https://nirog-setu-agents-xxxx-uc.a.run.app
+```
 
-2. **Session-based context** - ADK's `InMemorySessionService` maintains conversation state across turns (solves the "no history" problem from the Next.js implementation).
-
-3. **Tools as Python functions** - OpenFDA, UMLS, Google Maps, WhatsApp are plain async functions that ADK wraps as `FunctionTool` automatically.
-
-4. **Structured output** - Each agent produces JSON with a `transfer_to` field that the orchestrator uses for routing decisions.
-
-5. **Cloud Run deployment** - Stateless container with auto-scaling. Session state is in-memory per instance (upgrade to Firestore for production persistence).
+Next.js `next.config.js` rewrites all `/api/triage`, `/api/diagnose`, etc. calls to the ADK service automatically — no frontend code changes required.

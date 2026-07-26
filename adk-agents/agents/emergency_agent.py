@@ -1,10 +1,39 @@
 """Emergency Agent - Critical condition detection and ambulance dispatch."""
 
+import random
 from google.adk.agents import LlmAgent
 from google.genai import types
 
 from tools.whatsapp import send_whatsapp_message
 from tools.google_maps import find_nearest_hospitals
+
+
+# Standard first-aid instructions — mirrors app/api/emergency/route.ts
+STANDARD_FIRST_AID = [
+    "Keep the patient sitting upright in a well-ventilated area.",
+    "Loosen tight clothing around the neck and chest.",
+    "Monitor pulse and keep emergency contacts ready.",
+    "Do not offer solid foods or heavy liquids until paramedics arrive.",
+]
+
+def build_emergency_payload(patient_name: str, primary_diagnosis: str) -> dict:
+    """Build the 108 SOS dispatch payload — mirrors app/api/emergency/route.ts."""
+    sos_id = f"SOS-108-{random.randint(100000, 999999)}"
+    return {
+        "sos_ticket_id": sos_id,
+        "status": "AMBULANCE_EN_ROUTE",
+        "eta_minutes": 12,
+        "service_provider": "National Health Mission 108 Emergency Fleet",
+        "patient_info": {"name": patient_name, "suspected_condition": primary_diagnosis},
+        "first_aid_instructions": STANDARD_FIRST_AID,
+        "patient_message": (
+            f"Emergency services have been contacted. An ambulance (Ticket: {sos_id}) "
+            f"is on its way — estimated arrival in 12 minutes. "
+            f"While you wait: {STANDARD_FIRST_AID[0]} {STANDARD_FIRST_AID[1]} "
+            f"Stay calm and keep emergency contacts ready."
+        ),
+    }
+
 
 emergency_agent = LlmAgent(
     name="emergency_agent",

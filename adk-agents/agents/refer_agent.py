@@ -1,9 +1,53 @@
 """Refer Agent - Hospital finder and referral coordination."""
 
+import random
 from google.adk.agents import LlmAgent
 from google.genai import types
 
 from tools.google_maps import find_nearest_hospitals
+
+# Regional referral mapping — mirrors app/api/refer/route.ts referralMapping
+REGIONAL_REFERRAL_MAP = {
+    "Hindi": {
+        "facility_name": "Sanjay Gandhi Regional PHC Sub-Centre",
+        "address": "Sector 4, Near Community Hub, Lucknow, UP",
+        "distance_km": "4.2 km",
+        "bed_availability": "14 Beds Available",
+        "doctor_on_duty": "Dr. R. K. Sharma (General Medicine)",
+        "emergency_support": True,
+    },
+    "Bhojpuri": {
+        "facility_name": "Bhojpur Zonal Primary Health Centre",
+        "address": "Station Road, Opp. Civil Hospital, Ara, Bihar",
+        "distance_km": "2.8 km",
+        "bed_availability": "6 Beds Available",
+        "doctor_on_duty": "Dr. Suresh Verma (Chest Specialist)",
+        "emergency_support": True,
+    },
+    "English": {
+        "facility_name": "National Urban Health PHC Facility",
+        "address": "7th Main, KHB Colony, Koramangala, Bengaluru, Karnataka",
+        "distance_km": "3.1 km",
+        "bed_availability": "22 Beds Available",
+        "doctor_on_duty": "Dr. Ananya Rao (Pulmonologist)",
+        "emergency_support": True,
+    },
+}
+
+def build_referral_response(patient_lang: str, urgency_level: str, required_specialty: str) -> dict:
+    """Build referral payload — mirrors app/api/refer/route.ts response."""
+    facility = REGIONAL_REFERRAL_MAP.get(patient_lang, REGIONAL_REFERRAL_MAP["English"])
+    return {
+        "referral_code": f"REF-{random.randint(1000, 9999)}",
+        "facility": facility["facility_name"],
+        "address": facility["address"],
+        "distance": facility["distance_km"],
+        "beds": facility["bed_availability"],
+        "assigned_doctor": facility["doctor_on_duty"],
+        "specialty_needed": required_specialty or "General Diagnostics",
+        "urgency_priority": urgency_level,
+    }
+
 
 refer_agent = LlmAgent(
     name="refer_agent",

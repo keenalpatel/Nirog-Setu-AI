@@ -644,15 +644,15 @@ export default function ChatPage() {
                         <div className="bg-red-950/60 border border-red-500/60 p-4 rounded-xl space-y-3 animate-pulse">
                           <div className="flex justify-between items-center text-red-300 font-bold font-mono text-xs uppercase">
                             <span>🚨 EMERGENCY 108 AMBULANCE DISPATCHED</span>
-                            <span>Ticket: {sos.sosTicketId}</span>
+                            <span>Ticket: {sos.sos_ticket_id ?? sos.sosTicketId}</span>
                           </div>
                           <p className="text-xs text-white">
-                            Paramedics en route. Estimated arrival in <strong>{sos.etaMinutes} minutes</strong>.
+                            Paramedics en route. Estimated arrival in <strong>{sos.eta_minutes ?? sos.etaMinutes} minutes</strong>.
                           </p>
                           <div className="bg-black/50 p-3 rounded-lg text-xs space-y-1 text-gray-200">
                             <div className="font-semibold text-red-400">First-Aid Instructions While Help Is En Route:</div>
                             <ul className="list-disc pl-4 space-y-1 text-[11px]">
-                              {sos.firstAidInstructions?.map((step: string, i: number) => (
+                              {(sos.first_aid_instructions ?? sos.firstAidInstructions)?.map((step: string, i: number) => (
                                 <li key={i}>{step}</li>
                               ))}
                             </ul>
@@ -667,11 +667,11 @@ export default function ChatPage() {
                             <span className="text-xs font-mono text-emerald-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
                               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" /> ASHA Worker Priority Alert Sent
                             </span>
-                            <span className="text-[10px] font-mono text-emerald-300/80">ID: {asha.dispatchId}</span>
+                            <span className="text-[10px] font-mono text-emerald-300/80">ID: {asha.dispatch_id ?? asha.dispatchId}</span>
                           </div>
                           <div className="text-xs text-gray-200 space-y-1">
-                            <div><strong>Assigned Worker:</strong> {asha.assignedWorker} ({asha.workerPhone})</div>
-                            <div><strong>Action Status:</strong> {asha.actionRequired}</div>
+                            <div><strong>Assigned Worker:</strong> {asha.assigned_worker ?? asha.assignedWorker} ({asha.worker_phone ?? asha.workerPhone})</div>
+                            <div><strong>Action Status:</strong> {asha.action_required ?? asha.actionRequired}</div>
                           </div>
                         </div>
                       )}
