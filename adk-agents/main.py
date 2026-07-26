@@ -441,8 +441,19 @@ async def chat(request: ChatRequest):
                 triage_reply = "Hello! How can I help you today? Please tell me about your symptoms."
         reply_sections.append(f"Triage Assistant:\n{triage_reply}")
 
-        english_trans = triage_data.get("english_translation") if triage_data else ""
-        if english_trans and english_trans.strip().lower() != (triage_reply or "").strip().lower():
+        # Only show English translation when the patient actually wrote in a non-English language.
+        # Never show it for English input, greeting/handoff messages, or when the full
+        # diagnostic pipeline has fired (diagnose + prescribe results are present).
+        detected_lang = (triage_data.get("detected_language") or "").strip().lower() if triage_data else ""
+        english_trans = (triage_data.get("english_translation") or "").strip() if triage_data else ""
+        _non_english = detected_lang and detected_lang not in ("english", "en")
+        _not_trivial = english_trans.lower() not in (
+            "", "hello", "hi", "hey", "ok", "okay",
+            "patient sent an x-ray/medical image for diagnosis.",
+            "patient sent an x-ray/medical image for diagnosis",
+        )
+        _pipeline_not_complete = not (diagnose_data or prescribe_data or emergency_data)
+        if _non_english and _not_trivial and _pipeline_not_complete:
             reply_sections.append(f"English translation:\n{english_trans}")
 
         if emergency_data and emergency_data.get("patient_message"):
