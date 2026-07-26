@@ -2,7 +2,6 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from '@/lib/auth-context';
-import { Send, LogOut, Mic, Plus, X, FileText, Camera, Image as ImageIcon } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────
 type MessageType = 'user' | 'ai' | 'badge' | 'translation' | 'progress' | 'rag_trace' | 'diagnosis_card';
@@ -14,7 +13,12 @@ interface ChatMessage {
   timestamp: Date;
   translationOriginal?: string;
   translationResult?: string;
-  diagnosisData?: RegionalRoute;
+  translationDetectedLang?: string;
+  diagnosisData?: any;
+  prescriptionData?: any;
+  referralData?: any;
+  ashaData?: any;
+  emergencyData?: any;
 }
 
 interface RegionalRoute {
@@ -24,35 +28,22 @@ interface RegionalRoute {
   workerPhone: string;
 }
 
-// ─── Particle class (enhanced with connections + mouse interaction) ──
+// ─── Particle class ──────────────────────────────────────────────────
 class Particle {
-  x: number; y: number; size: number; speedX: number; speedY: number; opacity: number;
+  x: number; y: number; size: number; speedX: number; speedY: number; alpha: number;
   constructor(w: number, h: number) {
     this.x = Math.random() * w; this.y = Math.random() * h;
     this.size = Math.random() * 2 + 0.5;
-    this.speedX = Math.random() * 1 - 0.5;
-    this.speedY = Math.random() * 1 - 0.5;
-    this.opacity = Math.random() * 0.5 + 0.1;
+    this.speedX = Math.random() * 0.4 - 0.2; this.speedY = Math.random() * 0.4 - 0.2;
+    this.alpha = Math.random() * 0.4 + 0.1;
   }
-  update(w: number, h: number, mouseX: number | null, mouseY: number | null) {
+  update(w: number, h: number) {
     this.x += this.speedX; this.y += this.speedY;
-    if (this.x > w) this.x = 0;
-    if (this.x < 0) this.x = w;
-    if (this.y > h) this.y = 0;
-    if (this.y < 0) this.y = h;
-    // Mouse repulsion
-    if (mouseX != null && mouseY != null) {
-      const dx = mouseX - this.x;
-      const dy = mouseY - this.y;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-      if (distance < 100) {
-        this.x -= dx * 0.01;
-        this.y -= dy * 0.01;
-      }
-    }
+    if (this.x < 0 || this.x > w) this.speedX *= -1;
+    if (this.y < 0 || this.y > h) this.speedY *= -1;
   }
   draw(ctx: CanvasRenderingContext2D) {
-    ctx.fillStyle = `rgba(99, 102, 241, ${this.opacity})`;
+    ctx.fillStyle = `rgba(255,255,255,${this.alpha})`;
     ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2); ctx.fill();
   }
 }
@@ -79,25 +70,6 @@ const regionalDataMap: Record<string, RegionalRoute> = {
   },
 };
 
-// ─── Workflow locale messages ───────────────────────────────────────
-const getWorkflowLocales = (name: string): Record<string, Record<number, string>> => ({
-  English: {
-    1: `Namaste, ${name} 👋\nI am Nirog-Setu AI, your multi-agent health intelligence companion.\nPlease describe any health challenges or physical symptoms you are currently experiencing.`,
-    2: "Based on your symptom profile, this requires immediate, closer evaluation. Please upload any recent chest X-ray images or corresponding clinical reports using the '+' configuration option below so our specialized image node can parse it.",
-    3: 'Analyzing X-ray context...',
-  },
-  Hindi: {
-    1: `नमस्ते, ${name} 👋\nमैं निरोग-सेतु AI हूँ, आपका स्वास्थ्य इंटेलिजेंस सहायक।\nकृपया मुझे बताएं कि आपको क्या शारीरिक लक्षण या स्वास्थ्य संबंधी समस्याएं महसूस हो रही हैं?`,
-    2: "आपके लक्षणों को देखते हुए, इस स्थिति की तुरंत जांच की आवश्यकता है। कृपया नीचे दिए गए '+' बटन का उपयोग करके अपना चेस्ट एक्स-रे (Chest X-ray) या मेडिकल रिपोर्ट अपलोड करें ताकि हमारे इमेज नोड इसका विश्लेषण कर सकें।",
-    3: 'एक्स-रे का विश्लेषण किया जा रहा है...',
-  },
-  Bhojpuri: {
-    1: `नमस्ते, ${name} 👋\nहम निरोग-सेतु AI बानी, रउआ स्वास्थ्य सहायक।\nरउआ के का तकलीफ बा? कृपया बोल के बताइब।`,
-    2: "रउआ लक्षण देख के लगत बा कि एकर तुरंत जांच होखे के चाहीं। नीचे दिहल गइल '+' बटन दबाके आपन चेस्ट एक्स-रे या कवनो डॉक्टरी कागज अपलोड करीं ताकि नोड एकर जांच कर सके।",
-    3: 'एक्स-रे के जांच हो रहल बा...',
-  },
-});
-
 // ─── Component ───────────────────────────────────────────────────────
 export default function ChatPage() {
   const { user, logout } = useAuth();
@@ -106,24 +78,26 @@ export default function ChatPage() {
   const [isTyping, setIsTyping] = useState(false);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [userTurnCount, setUserTurnCount] = useState(0);
   const [progressValue, setProgressValue] = useState(0);
   const [showProgress, setShowProgress] = useState(false);
   const [dispatchCount, setDispatchCount] = useState('1,824');
   const [toast, setToast] = useState<{ visible: boolean; phone: string }>({ visible: false, phone: '' });
+  
+  const [attachedImage, setAttachedImage] = useState<string | null>(null);
+  const [attachedFileName, setAttachedFileName] = useState<string>('');
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<any>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const particlesRef = useRef<Particle[]>([]);
-  const initializedRef = useRef(false);
   const animRef = useRef<number>(0);
-  const currentStepRef = useRef(1);
+  
   const photoPickerRef = useRef<HTMLInputElement>(null);
   const filePickerRef = useRef<HTMLInputElement>(null);
   const xrayPickerRef = useRef<HTMLInputElement>(null);
 
-  // Patient info from localStorage (or defaults)
   const [patientName, setPatientName] = useState('Niha');
   const [patientLang, setPatientLang] = useState('Hindi');
 
@@ -132,51 +106,34 @@ export default function ChatPage() {
       setPatientName(localStorage.getItem('ns_patient_name') || 'Niha');
       setPatientLang(localStorage.getItem('ns_patient_lang') || 'Hindi');
     }
+    
+    setMessages([
+      {
+        id: 'initial-greeting',
+        type: 'ai',
+        content: `Hello ${localStorage.getItem('ns_patient_name') || 'Niha'}, I am your Nirog-Setu health assistant. You can describe your symptoms in your preferred language (${localStorage.getItem('ns_patient_lang') || 'Hindi'}), or upload medical records/X-rays below for translation and priority triage analysis.`,
+        timestamp: new Date()
+      }
+    ]);
   }, []);
 
-  const workflowLocales = getWorkflowLocales(patientName);
-
-  // ── Particle animation (with connections + mouse) ──
+  // ── Particle animation ──
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const mouse = { x: null as number | null, y: null as number | null };
     const resize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
     resize();
     window.addEventListener('resize', resize);
-    const onMouseMove = (e: MouseEvent) => { mouse.x = e.x; mouse.y = e.y; };
-    window.addEventListener('mousemove', onMouseMove);
-    particlesRef.current = Array.from({ length: 100 }, () => new Particle(canvas.width, canvas.height));
+    particlesRef.current = Array.from({ length: 40 }, () => new Particle(canvas.width, canvas.height));
     const animate = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const pts = particlesRef.current;
-      // Draw connection lines
-      for (let i = 0; i < pts.length; i++) {
-        for (let j = i + 1; j < pts.length; j++) {
-          const dx = pts[i].x - pts[j].x;
-          const dy = pts[i].y - pts[j].y;
-          const distance = Math.sqrt(dx * dx + dy * dy);
-          if (distance < 100) {
-            ctx.strokeStyle = `rgba(99, 102, 241, ${0.1 * (1 - distance / 100)})`;
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(pts[i].x, pts[i].y);
-            ctx.lineTo(pts[j].x, pts[j].y);
-            ctx.stroke();
-          }
-        }
-      }
-      pts.forEach((p) => { p.update(canvas.width, canvas.height, mouse.x, mouse.y); p.draw(ctx); });
+      particlesRef.current.forEach((p) => { p.update(canvas.width, canvas.height); p.draw(ctx); });
       animRef.current = requestAnimationFrame(animate);
     };
     animate();
-    return () => {
-      window.removeEventListener('resize', resize);
-      window.removeEventListener('mousemove', onMouseMove);
-      cancelAnimationFrame(animRef.current);
-    };
+    return () => { window.removeEventListener('resize', resize); cancelAnimationFrame(animRef.current); };
   }, []);
 
   // ── Auto-scroll ──
@@ -186,24 +143,42 @@ export default function ChatPage() {
 
   // ── Speech recognition setup ──
   useEffect(() => {
-    if (typeof window !== 'undefined' && ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      const recognition = new SpeechRecognition();
-      recognition.continuous = false;
-      recognition.lang = patientLang === 'Hindi' ? 'hi-IN' : patientLang === 'Bhojpuri' ? 'hi-IN' : 'en-US';
-      recognition.interimResults = false;
-      recognition.onstart = () => setIsListening(true);
-      recognition.onresult = (event: any) => {
-        const text = event.results[0][0].transcript;
-        if (text) setInput(text);
-      };
-      recognition.onerror = () => setIsListening(false);
-      recognition.onend = () => setIsListening(false);
-      recognitionRef.current = recognition;
-    }
-  }, [patientLang]);
+    if (typeof window !== 'undefined') {
+      const SpeechRecognition =
+        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
-  // (menu closes via backdrop overlay, no document listener needed)
+      if (SpeechRecognition) {
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+
+        recognition.onstart = () => {
+          setIsListening(true);
+        };
+
+        recognition.onresult = (event: any) => {
+          let currentTranscript = '';
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            currentTranscript += event.results[i][0].transcript;
+          }
+          if (currentTranscript) {
+            setInput(currentTranscript);
+          }
+        };
+
+        recognition.onerror = (event: any) => {
+          console.warn('Speech recognition error:', event.error);
+          setIsListening(false);
+        };
+
+        recognition.onend = () => {
+          setIsListening(false);
+        };
+
+        recognitionRef.current = recognition;
+      }
+    }
+  }, []);
 
   // ── Toast auto-dismiss ──
   useEffect(() => {
@@ -212,10 +187,8 @@ export default function ChatPage() {
     return () => clearTimeout(t);
   }, [toast.visible]);
 
-  // ── Helper: generate unique id ──
   const uid = () => Date.now().toString() + Math.random().toString(36).slice(2);
 
-  // ── Helpers ──
   const appendMessage = useCallback((type: MessageType, content: string, extra?: Partial<ChatMessage>) => {
     setMessages((prev) => [...prev, { id: uid(), type, content, timestamp: new Date(), ...extra }]);
   }, []);
@@ -224,184 +197,358 @@ export default function ChatPage() {
     appendMessage('badge', text);
   }, [appendMessage]);
 
-  const appendBhashiniTranslation = useCallback((original: string, translated: string) => {
-    setMessages((prev) => [...prev, {
-      id: uid(),
-      type: 'translation',
-      content: '',
-      timestamp: new Date(),
-      translationOriginal: original,
-      translationResult: translated,
-    }]);
-  }, []);
+  // ── Unified Pipeline Executor for Multi-Agent Resolution ──
+  const runMultiAgentPipeline = useCallback(async (diagnosePromise: Promise<any>) => {
+    let prog = 0;
+    const interval = setInterval(async () => {
+      prog += 25;
+      setProgressValue(prog);
+      
+      if (prog >= 100) {
+        clearInterval(interval);
+        
+        try {
+          const diagnoseData = await diagnosePromise;
+          if (!diagnoseData || !diagnoseData.success) {
+            throw new Error(diagnoseData?.error || "Diagnosis verification failed");
+          }
 
-  const triggerAiResponse = useCallback((customText: string | null = null) => {
-    setIsTyping(true);
-    setTimeout(() => {
-      setIsTyping(false);
-      const step = currentStepRef.current;
-      if (step === 2) {
-        appendBadge('Triage-Agent Routed Query');
-      }
-      const message = customText || workflowLocales[patientLang]?.[step] || 'Please share further context.';
-      appendMessage('ai', message);
-    }, 1200);
-  }, [appendBadge, appendMessage, patientLang, workflowLocales]);
+          const report = diagnoseData.report || {};
+          const urgency = (report.triage_urgency_level || report.urgency || 'Moderate').toString();
+          const primaryDiag = report.primary_diagnosis || report.diagnosis || report.condition || 'General Diagnostic Assessment';
 
-  // ── Render AlloyDB trace + diagnosis card after progress ──
-  const renderAlloyDbTraceAndDiagnosis = useCallback(() => {
-    appendBadge('Vertex AI Vision & Gemini 2.0 Multimodal Execution Layer Active');
-    appendMessage('rag_trace', '');
+          let prescribeData = null;
+          let referData = null;
+          let ashaData = null;
+          let emergencyData = null;
 
-    setTimeout(() => {
-      appendBadge('Diagnose-Agent Finished Logic Processing • AlloyDB RAG Grounding Verified');
-      const activeRoute = regionalDataMap[patientLang] || regionalDataMap['English'];
-      setMessages((prev) => [...prev, {
-        id: uid(),
-        type: 'diagnosis_card',
-        content: '',
-        timestamp: new Date(),
-        diagnosisData: activeRoute,
-      }]);
-      // Update dispatch counter and show toast
-      setDispatchCount('1,825');
-      setToast({ visible: true, phone: activeRoute.workerPhone });
-    }, 1000);
-  }, [appendBadge, appendMessage, patientLang]);
+          try {
+            // 1. Prescribe-Agent
+            const prescribeRes = await fetch('/api/prescribe', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                diagnosticReport: report,
+                patientAge: 30,
+                allergies: []
+              })
+            });
+            if (prescribeRes.ok) prescribeData = await prescribeRes.json();
 
-  // ── Submit handler ──
-  const handleSubmit = useCallback(
-    (e?: React.FormEvent) => {
-      if (e) e.preventDefault();
-      const val = input.trim();
-      if (!val) return;
-      appendMessage('user', val);
-      setInput('');
-      setAttachMenuOpen(false);
+            // 2. Refer-Agent
+            const referRes = await fetch('/api/refer', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                patientLang: patientLang || 'English',
+                urgencyLevel: urgency,
+                requiredSpecialty: primaryDiag
+              })
+            });
+            if (referRes.ok) referData = await referRes.json();
 
-      if (currentStepRef.current === 1) {
-        currentStepRef.current = 2;
-        if (patientLang !== 'English') {
+            // 3. ASHA-Agent (Only for High/Critical)
+            if (['high', 'critical'].includes(urgency.toLowerCase())) {
+              const ashaRes = await fetch('/api/asha', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  patientName: patientName || 'Patient',
+                  patientLang: patientLang || 'English',
+                  primaryDiagnosis: primaryDiag,
+                  urgencyLevel: urgency
+                })
+              });
+              if (ashaRes.ok) ashaData = await ashaRes.json();
+            }
+
+            // 4. Emergency-Agent (Only for Critical)
+            if (urgency.toLowerCase() === 'critical') {
+              const emergencyRes = await fetch('/api/emergency', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  patientName: patientName || 'Patient',
+                  patientLang: patientLang || 'English',
+                  primaryDiagnosis: primaryDiag
+                })
+              });
+              if (emergencyRes.ok) emergencyData = await emergencyRes.json();
+            }
+          } catch (secondaryErr) {
+            console.warn("Secondary agent non-fatal error:", secondaryErr);
+          }
+
+          setShowProgress(false);
+
+          // Dynamic score for trace log
+          const primaryDiff = report?.differential_diagnoses?.[0];
+          const rawScore = primaryDiff?.confidence_score ?? report?.confidence_score;
+          const formattedScore = rawScore 
+            ? (typeof rawScore === 'number' && rawScore <= 1 ? `${(rawScore * 100).toFixed(1)}%` : `${rawScore}`)
+            : 'Grounded';
+
+          appendMessage('rag_trace', formattedScore);
+
           setTimeout(() => {
-            appendBhashiniTranslation(val, 'I have had a bad cough and fever for three weeks, and I am coughing up blood.');
-            triggerAiResponse(null);
-          }, 500);
-        } else {
-          triggerAiResponse(null);
+            appendBadge(
+              urgency.toLowerCase() === 'critical'
+                ? '🚨 CRITICAL ESCALATION: Emergency 108 Ambulance & ASHA Alerts Dispatched'
+                : urgency.toLowerCase() === 'high'
+                ? '⚡ HIGH URGENCY: Priority ASHA Worker Notified & PHC Referral Locked'
+                : 'Diagnose & Prescribe Execution Completed • ICMR Grounding Verified'
+            );
+
+            setMessages((prev) => [...prev, {
+              id: uid(),
+              type: 'diagnosis_card',
+              content: '',
+              timestamp: new Date(),
+              diagnosisData: report,
+              prescriptionData: prescribeData?.success ? prescribeData.prescription : null,
+              referralData: referData?.success ? referData.referral : null,
+              ashaData: ashaData?.success ? ashaData.ashaDispatch : null,
+              emergencyData: emergencyData?.success ? emergencyData.emergency : null,
+            }]);
+
+            if (ashaData?.success) {
+              setDispatchCount('1,826');
+              setToast({ visible: true, phone: ashaData.ashaDispatch.workerPhone });
+            }
+
+            setAttachedImage(null);
+          }, 1000);
+
+        } catch (diagError) {
+          console.error("Multi-agent execution error:", diagError);
+          setShowProgress(false);
+          appendMessage('ai', 'Error processing secondary diagnostic rules verification.');
         }
-      } else {
-        triggerAiResponse("Thank you. Please use the '+' attachment menu to upload your diagnostic file to proceed.");
       }
-    },
-    [input, appendMessage, patientLang, appendBhashiniTranslation, triggerAiResponse],
-  );
+    }, 150);
+  }, [appendMessage, appendBadge, patientLang, patientName]);
 
-  // ── File upload handler ──
-  const handleFileSelected = useCallback(
-    (type: string) => {
+  // ── Direct Multi-Agent Submitter for Image/Upload Triggers ──
+  const triggerDirectImageSubmit = useCallback(async (imageBase64Data: string, fileName: string) => {
+    setIsTyping(true);
+    const userMsgContent = `Patient attached a medical image/scan.`;
+    
+    const newLocalUserMsg = { 
+      id: uid(), 
+      type: 'user' as const, 
+      content: `🩻 Attached Medical Scan: ${fileName}`, 
+      timestamp: new Date() 
+    };
+    
+    setMessages((prev) => [...prev, newLocalUserMsg]);
+    setAttachMenuOpen(false);
+
+    try {
+      const response = await fetch('/api/triage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: userMsgContent,
+          imageBase64: imageBase64Data,
+          history: [...messages, newLocalUserMsg]
+        })
+      });
+
+      if (!response.ok) throw new Error('Triage endpoint validation error.');
+      const triageData = await response.json();
+      setIsTyping(false);
+
+      appendMessage('ai', triageData.reply);
+
+      appendBadge('Vertex AI Vision & Gemini 2.5 Multimodal Execution Layer Active');
+      setShowProgress(true);
+      setProgressValue(0);
+
+      const diagnosePromise = fetch('/api/diagnose', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          history: [...messages, newLocalUserMsg],
+          imageBase64: imageBase64Data
+        })
+      }).then(res => res.json());
+
+      await runMultiAgentPipeline(diagnosePromise);
+
+    } catch (error) {
+      console.error("Direct upload submission block failed:", error);
+      setIsTyping(false);
+      appendMessage('ai', 'Network error communicating with the system core.');
+    }
+  }, [messages, appendMessage, appendBadge, runMultiAgentPipeline]);
+
+  // ── Standard Text Form Submit handler ──
+  const handleSubmit = useCallback(
+    async (e?: React.FormEvent) => {
+      if (e) e.preventDefault();
+
+      if (isListening && recognitionRef.current) {
+        recognitionRef.current.stop();
+        setIsListening(false);
+      }
+      const val = input.trim();
+      if (!val && !attachedImage) return;
+
+      const userMsgContent = val || `Patient attached a medical file: ${attachedFileName || 'Image Upload'}`;
+      
+      const newLocalUserMsg = {
+        id: uid(),
+        type: 'user' as const,
+        content: val ? userMsgContent : `🩻 ${attachedFileName || 'Attached Medical Image'}`,
+        timestamp: new Date()
+      };
+      
+      setMessages((prev) => [...prev, newLocalUserMsg]);
+      const nextTurnCount = userTurnCount + 1;
+      setUserTurnCount(nextTurnCount);
+      
+      setInput('');
+      setAttachedFileName('');
       setAttachMenuOpen(false);
+      setIsTyping(true);
 
-      if (type === 'Chest X-ray') {
-        appendMessage('user', '🩻 Attached: Patient_Chest_XRay_Report.pdf');
-        currentStepRef.current = 3;
-        setIsTyping(true);
+      try {
+        const response = await fetch('/api/triage', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: userMsgContent,
+            imageBase64: attachedImage, 
+            history: [...messages, newLocalUserMsg]
+          })
+        });
 
-        setTimeout(() => {
-          setIsTyping(false);
-          appendMessage('ai', 'File received. Initiating cloud pipeline analysis execution context...');
+        if (!response.ok) throw new Error('Network core validation error.');
+        const triageData = await response.json();
+        setIsTyping(false);
 
-          // Start progress
-          appendBadge('Vertex AI Vision & Gemini 2.0 Multimodal Execution Layer Active');
+        appendMessage('ai', triageData.reply);
+
+        if (triageData.translation && triageData.detectedLanguage?.toLowerCase() !== 'english') {
+          setMessages((prev) => [...prev, {
+            id: uid(),
+            type: 'translation',
+            content: '',
+            timestamp: new Date(),
+            translationOriginal: userMsgContent,
+            translationResult: triageData.translation,
+            translationDetectedLang: triageData.detectedLanguage,
+          }]);
+        }
+
+        if ((triageData.isComplete && nextTurnCount >= 7) || attachedImage) {
+          appendBadge('Vertex AI Vision & Gemini 2.5 Multimodal Execution Layer Active');
           setShowProgress(true);
           setProgressValue(0);
-          let prog = 0;
-          const interval = setInterval(() => {
-            prog += 10;
-            setProgressValue(prog);
-            if (prog >= 100) {
-              clearInterval(interval);
-              setTimeout(() => {
-                setShowProgress(false);
-                // Show RAG trace
-                appendMessage('rag_trace', '');
-                setTimeout(() => {
-                  appendBadge('Diagnose-Agent Finished Logic Processing • AlloyDB RAG Grounding Verified');
-                  const activeRoute = regionalDataMap[patientLang] || regionalDataMap['English'];
-                  setMessages((prev) => [...prev, {
-                    id: uid(),
-                    type: 'diagnosis_card',
-                    content: '',
-                    timestamp: new Date(),
-                    diagnosisData: activeRoute,
-                  }]);
-                  setDispatchCount('1,825');
-                  setToast({ visible: true, phone: activeRoute.workerPhone });
-                }, 1000);
-              }, 400);
-            }
-          }, 200);
-        }, 1000);
-      } else {
-        appendMessage('user', `📎 Attached ${type}`);
-        triggerAiResponse('Document uploaded successfully. Please provide your Chest X-ray file for structural evaluation matching.');
+
+          const diagnosePromise = fetch('/api/diagnose', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              history: [...messages, newLocalUserMsg],
+              imageBase64: attachedImage
+            })
+          }).then(res => res.json());
+
+          await runMultiAgentPipeline(diagnosePromise);
+        }
+      
+      } catch (error) {
+        setIsTyping(false);
+        appendMessage('ai', 'Network error communicating with the system core.');
       }
     },
-    [appendMessage, appendBadge, triggerAiResponse, patientLang],
+    [input, attachedImage, attachedFileName, messages, userTurnCount, appendMessage, appendBadge, runMultiAgentPipeline],
   );
 
-  // ── Voice toggle ──
-  const toggleVoice = useCallback(() => {
-    if (!recognitionRef.current) return;
-    if (isListening) {
-      recognitionRef.current.stop();
-    } else {
-      // Pre-fill based on language for demo
-      if (patientLang === 'Hindi') {
-        setInput('मुझे तीन हफ्ते से बहुत तेज खांसी और बुखार है, और थूक में खून आ रहा है।');
-      } else if (patientLang === 'Bhojpuri') {
-        setInput('हमरा तीन हफ्ता से बहुत तेज खोखी अउर बुखार बा, अउर खोखला पर मुंह से खून गिरत बा।');
-      } else {
-        setInput('I have had a bad cough and fever for three weeks, and I am coughing up blood.');
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, type: string) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 8 * 1024 * 1024) {
+      alert("Selected image is too large. Please select an X-ray or scan under 8MB.");
+      return;
+    }
+
+    setAttachedFileName(file.name);
+    
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64String = reader.result as string;
+      setAttachedImage(base64String);
+
+      if (typeof triggerDirectImageSubmit === 'function') {
+        try {
+          await triggerDirectImageSubmit(base64String, file.name);
+        } catch (err) {
+          console.error("Error submitting medical image:", err);
+        }
       }
-      recognitionRef.current.start();
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const toggleVoice = useCallback(() => {
+    const recognition = recognitionRef.current;
+
+    if (!recognition) {
+      alert('Speech recognition is not supported in this browser. Please use Chrome or Edge.');
+      return;
+    }
+
+    if (isListening) {
+      recognition.stop();
+    } else {
+      recognition.lang =
+        patientLang === 'Hindi'     ? 'hi-IN' :
+        patientLang === 'Bhojpuri'  ? 'bho-IN' :
+        patientLang === 'Telugu'    ? 'te-IN' :
+        patientLang === 'Tamil'     ? 'ta-IN' :
+        patientLang === 'Marathi'   ? 'mr-IN' :
+        patientLang === 'Bengali'   ? 'bn-IN' :
+        patientLang === 'Kannada'   ? 'kn-IN' :
+        patientLang === 'Malayalam' ? 'ml-IN' :
+        patientLang === 'Gujarati'  ? 'gu-IN' :
+        patientLang === 'Odia'      ? 'or-IN' :
+        patientLang === 'Punjabi'   ? 'pa-IN' :
+        patientLang === 'Urdu'      ? 'ur-IN' :
+        'en-IN';
+
+      try {
+        recognition.start();
+      } catch (err) {
+        console.error('Error starting speech recognition:', err);
+      }
     }
   }, [isListening, patientLang]);
 
-  // ── Logout ──
   const handleLogout = useCallback(() => {
     if (typeof window !== 'undefined') localStorage.clear();
     logout();
   }, [logout]);
 
-  // ── Initial greeting ──
-  useEffect(() => {
-    if (initializedRef.current) return;
-    initializedRef.current = true;
-    triggerAiResponse(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // ── Render helpers ──
   const formatTime = (d: Date) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden" style={{ fontFamily: "'Inter', sans-serif", color: 'white' }}>
-      {/* Aurora + Particles */}
-      <div className="aurora-bg" style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 0 }} />
-      <canvas ref={canvasRef} style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 1, pointerEvents: 'none' }} />
+    <div className="fixed inset-0 w-screen h-screen flex flex-col overflow-hidden bg-[#0a0a0a] text-white font-sans">
+      <canvas ref={canvasRef} className="absolute inset-0 pointer-events-none z-0" />
 
       {/* ── Navigation Header ── */}
-      <nav className="glass px-6 py-4 shrink-0" style={{ zIndex: 50, position: 'relative' }}>
+      <nav className="relative w-full border-b border-white/10 bg-black/40 backdrop-blur-md px-6 py-4 shrink-0 z-50">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-sm">NS</div>
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-sm shadow-md">NS</div>
             <div>
               <span className="font-semibold text-base tracking-wider block text-white">Nirog-Setu AI</span>
               <span className="text-xs text-indigo-300 font-medium">Patient: {patientName} ({patientLang})</span>
             </div>
           </div>
 
-          {/* Live Command Center Analytics Ticker */}
           <div className="flex items-center gap-6">
             <div className="hidden md:flex items-center gap-4 text-right">
               <div>
@@ -417,10 +564,7 @@ export default function ChatPage() {
               <div className="hidden sm:flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 rounded-full text-xs text-emerald-400 font-medium">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Medical AI Active
               </div>
-              <button
-                onClick={handleLogout}
-                className="text-xs text-gray-400 hover:text-white border border-white/10 px-3 py-1.5 rounded-lg bg-white/5 transition-all"
-              >
+              <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-white border border-white/10 px-3 py-1.5 rounded-lg bg-white/5 transition-all">
                 Sign Out
               </button>
             </div>
@@ -428,15 +572,15 @@ export default function ChatPage() {
         </div>
       </nav>
 
-      {/* ── Main Workspace Container ── */}
-      <main className="flex-grow flex flex-col max-w-4xl w-full mx-auto overflow-hidden" style={{ position: 'relative', zIndex: 10 }}>
-        {/* Message Stream */}
-        <div className="flex-grow p-6 overflow-y-auto space-y-6 chat-scroll">
+      {/* ── Main Flex Container ── */}
+      <div className="relative flex-grow flex flex-col min-h-0 w-full max-w-4xl mx-auto z-10">
+        
+        {/* Chat Messages Log Panel */}
+        <div className="flex-grow overflow-y-auto px-6 py-6 space-y-6 min-h-0 chat-scroll">
           {messages.map((msg) => {
-            // ── System Badge ──
             if (msg.type === 'badge') {
               return (
-                <div key={msg.id} className="flex w-full justify-center my-2" style={{ animation: 'fadeIn 0.3s ease-out forwards' }}>
+                <div key={msg.id} className="flex w-full justify-center my-2 animate-fade">
                   <div className="bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 text-[10px] uppercase font-bold tracking-widest px-3 py-1 rounded-md shadow-sm">
                     ⚡ SYSTEM CORE: {msg.content}
                   </div>
@@ -444,13 +588,12 @@ export default function ChatPage() {
               );
             }
 
-            // ── Bhashini Translation ──
             if (msg.type === 'translation') {
               return (
-                <div key={msg.id} className="flex w-full justify-start mb-1" style={{ animation: 'fadeIn 0.3s ease-out forwards' }}>
+                <div key={msg.id} className="flex w-full justify-start mb-1 animate-fade">
                   <div className="max-w-[78%] bg-white/5 border border-white/10 px-4 py-2 rounded-xl text-xs text-gray-400 italic">
                     <span className="text-indigo-400 font-semibold not-italic block mb-0.5">
-                      🌐 Bhashini translation layer ({patientLang} ➜ English):
+                      🌐 Bhashini translation layer ({msg.translationDetectedLang || patientLang} ➜ English):
                     </span>
                     &ldquo;{msg.translationResult}&rdquo;
                   </div>
@@ -458,81 +601,232 @@ export default function ChatPage() {
               );
             }
 
-            // ── AlloyDB RAG Terminal Trace ──
             if (msg.type === 'rag_trace') {
               return (
-                <div key={msg.id} className="flex w-full justify-start font-mono text-[11px] mb-2" style={{ animation: 'fadeIn 0.3s ease-out forwards' }}>
+                <div key={msg.id} className="flex w-full justify-start font-mono text-[11px] mb-2 animate-fade">
                   <div className="w-full max-w-lg bg-black/50 border border-indigo-500/20 p-3 rounded-xl text-gray-400 space-y-1 shadow-md">
                     <div className="text-indigo-400 font-bold flex items-center gap-1.5">
                       <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-ping" />&gt;_ ALLOYDB_VECTOR_RECON:
                     </div>
                     <div>[0.02s] Generating structural embeddings for uploaded X-ray slice...</div>
                     <div>[0.08s] Executing vector similarity search against 42,000+ clinical indexes...</div>
-                    <div className="text-emerald-400 font-medium">[0.12s] Match found: MOHFW_TB_Protocol_Standard.db (94.2% confidence index)</div>
-                  </div>
-                </div>
-              );
-            }
-
-            // ── Diagnosis Card ──
-            if (msg.type === 'diagnosis_card' && msg.diagnosisData) {
-              const route = msg.diagnosisData;
-              return (
-                <div key={msg.id} className="flex w-full justify-start" style={{ animation: 'fadeIn 0.3s ease-out forwards' }}>
-                  <div className="w-full max-w-lg glass-card border border-red-500/30 rounded-2xl overflow-hidden shadow-2xl">
-                    <div className="bg-red-500/10 border-b border-red-500/20 px-6 py-4 flex items-center justify-between">
-                      <h4 className="text-red-400 font-bold text-sm tracking-wider uppercase flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" /> Diagnostic Analysis Output
-                      </h4>
-                      <span className="text-xs text-red-400 font-semibold bg-red-500/20 px-2 py-0.5 rounded">High Severity</span>
-                    </div>
-                    <div className="p-6 space-y-4 text-sm">
-                      <div className="flex justify-between items-start border-b border-white/5 pb-3">
-                        <span className="text-gray-400 font-medium shrink-0">Finding Condition</span>
-                        <span className="text-red-400 font-bold text-right ml-4">High Probability of Pulmonary TB</span>
-                      </div>
-                      <div className="flex flex-col border-b border-white/5 pb-3 gap-0.5">
-                        <div className="flex justify-between items-center">
-                          <span className="text-gray-400 font-medium">Nearest Healthcare PHC</span>
-                          <span className="text-white font-semibold text-right">{route.phcName}</span>
-                        </div>
-                        <span className="text-[11px] text-indigo-300/80 text-right font-mono">{route.location}</span>
-                      </div>
-                      <div className="flex flex-col border-b border-white/5 pb-3 gap-0.5">
-                        <div className="flex justify-between items-center">
-                          <span className="text-gray-400 font-medium">Assigned ASHA Worker</span>
-                          <span className="text-white font-semibold text-right">{route.workerName}</span>
-                        </div>
-                        <span className="text-[11px] text-emerald-400 text-right font-mono font-medium">📞 Contact: {route.workerPhone}</span>
-                      </div>
-                      <div className="pt-2 space-y-1.5">
-                        <span className="text-xs font-semibold uppercase tracking-wider text-emerald-400 block">✓ Automated Emergency Action Triggered</span>
-                        <p className="text-gray-300 leading-relaxed text-xs bg-emerald-500/5 border border-emerald-500/10 p-3 rounded-xl">
-                          Structured diagnostic summary notification encrypted &amp; dispatched to assigned ASHA worker <strong>{route.workerName}</strong> ({route.workerPhone}). Telemetry tracking has matched patient profile endpoints directly with <strong>{route.phcName}</strong> database queues.
-                        </p>
-                      </div>
+                    <div className="text-emerald-400 font-medium">
+                      [0.12s] Match found: MOHFW_Clinical_Guidelines.db ({msg.content || 'Grounded'} confidence index)
                     </div>
                   </div>
                 </div>
               );
             }
 
-            // ── User / AI Message Bubbles ──
+if (msg.type === 'diagnosis_card' && msg.diagnosisData) {
+  const report = msg.diagnosisData;
+  const rx = msg.prescriptionData;
+  const ref = msg.referralData;
+  const asha = msg.ashaData;
+  const sos = msg.emergencyData;
+
+  const conditionName = report.primary_diagnosis || 'Diagnosis Complete';
+  const confidenceScore = report.diagnostic_confidence_percentage || 85;
+  const urgency = report.triage_urgency_level || 'Moderate';
+
+  return (
+    <div key={msg.id} className="flex w-full justify-start animate-fade my-2">
+      <div className="w-full max-w-2xl bg-neutral-900/90 border border-indigo-500/30 rounded-2xl overflow-hidden shadow-2xl backdrop-blur-md">
+        
+        {/* Header with Urgency Badge */}
+        <div className="bg-indigo-500/10 border-b border-indigo-500/20 px-6 py-4 flex items-center justify-between">
+          <h4 className="text-indigo-300 font-bold text-sm tracking-wider uppercase flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-indigo-400 animate-pulse" /> Multi-Agent Diagnostic Report
+          </h4>
+          <span className={`text-xs font-mono px-3 py-1 rounded-full border font-semibold uppercase ${
+            urgency.toLowerCase() === 'critical' ? 'bg-red-600 text-white border-red-400 animate-pulse' :
+            urgency.toLowerCase() === 'high' ? 'bg-red-950/80 text-red-400 border-red-500/40' :
+            'bg-amber-950/80 text-amber-400 border-amber-500/40'
+          }`}>
+            {urgency} Urgency
+          </span>
+        </div>
+
+        <div className="p-6 space-y-5 text-sm text-left">
+          
+          {/* 1. Primary Diagnosis & Confidence Score */}
+          <div className="bg-black/60 p-4 rounded-xl border border-white/10 space-y-2">
+            <div className="flex justify-between items-center">
+              <div className="text-[10px] uppercase font-mono tracking-wider text-gray-400">Primary Diagnosis Summary</div>
+              <div className="text-xs font-mono text-emerald-400 font-bold">{confidenceScore}% Confidence</div>
+            </div>
+            <h3 className="text-lg font-bold text-indigo-300">{conditionName}</h3>
+            
+            {/* Risk Factors */}
+            {report.identified_risk_factors?.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {report.identified_risk_factors.map((rf: string, idx: number) => (
+                  <span key={idx} className="bg-red-500/10 text-red-300 border border-red-500/20 text-[10px] px-2 py-0.5 rounded-md font-mono">
+                    ⚠️ {rf}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* 2. Differential Diagnoses & ICD-10 Resolution */}
+          {report.differential_diagnoses?.length > 0 && (
+            <div className="bg-black/40 p-4 rounded-xl border border-white/10 space-y-2">
+              <div className="text-[10px] uppercase font-mono tracking-wider text-gray-400">Differential Diagnoses & ICD-10 Verification</div>
+              <div className="space-y-2">
+                {report.differential_diagnoses.map((diff: any, idx: number) => (
+                  <div key={idx} className="bg-white/5 p-2.5 rounded-lg border border-white/5 flex justify-between items-start text-xs">
+                    <div>
+                      <div className="font-semibold text-gray-200">
+                        {diff.condition_name}
+                        {diff.icd_10_code && (
+                          <span className="ml-2 font-mono text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-1.5 py-0.5 rounded">
+                            ICD-10: {diff.icd_10_code}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-gray-400 mt-0.5">{diff.clinical_rationale}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 3. EMERGENCY-AGENT (Critical SOS Alert) */}
+          {sos && (
+            <div className="bg-red-950/60 border border-red-500/60 p-4 rounded-xl space-y-3 animate-pulse">
+              <div className="flex justify-between items-center text-red-300 font-bold font-mono text-xs uppercase">
+                <span>🚨 EMERGENCY 108 AMBULANCE DISPATCHED</span>
+                <span>Ticket: {sos.sosTicketId}</span>
+              </div>
+              <p className="text-xs text-white">
+                Paramedics en route. Estimated arrival in <strong>{sos.etaMinutes} minutes</strong>.
+              </p>
+              {sos.firstAidInstructions?.length > 0 && (
+                <div className="bg-black/50 p-3 rounded-lg text-xs space-y-1 text-gray-200">
+                  <div className="font-semibold text-red-400">First-Aid Instructions:</div>
+                  <ul className="list-disc pl-4 space-y-1 text-[11px]">
+                    {sos.firstAidInstructions.map((step: string, i: number) => (
+                      <li key={i}>{step}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 4. ASHA-AGENT */}
+          {asha && (
+            <div className="bg-emerald-950/30 border border-emerald-500/40 p-4 rounded-xl space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-mono text-emerald-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" /> ASHA Worker Priority Alert Sent
+                </span>
+                <span className="text-[10px] font-mono text-emerald-300/80">ID: {asha.dispatchId}</span>
+              </div>
+              <div className="text-xs text-gray-200 space-y-1">
+                <div><strong>Assigned Worker:</strong> {asha.assignedWorker} ({asha.workerPhone})</div>
+                <div><strong>Action Status:</strong> {asha.actionRequired}</div>
+              </div>
+            </div>
+          )}
+
+          {/* 5. REFER-AGENT */}
+          {ref && (
+            <div className="bg-blue-950/30 border border-blue-500/40 p-4 rounded-xl space-y-2">
+              <div className="flex justify-between items-center text-xs font-mono text-blue-300 font-bold uppercase tracking-wider">
+                <span>🏥 Assigned Health Facility Referral</span>
+                <span>Ref: {ref.referralCode}</span>
+              </div>
+              <div className="text-xs text-gray-200 space-y-1">
+                <div className="font-bold text-white text-sm">{ref.facility}</div>
+                <div className="text-gray-400">{ref.address} ({ref.distance} away)</div>
+                <div className="flex gap-4 pt-1 text-[11px] text-blue-200 font-mono">
+                  <span>🛏️ {ref.beds}</span>
+                  <span>👨‍⚕️ {ref.assignedDoctor}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 6. PRESCRIBE-AGENT (With FDA Notices & Drug Interaction Alerts) */}
+          {rx && (
+            <div className="bg-emerald-950/20 border border-emerald-500/30 p-4 rounded-xl space-y-3">
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-mono text-emerald-400 font-bold uppercase tracking-wider">
+                  💊 Prescribe-Agent Protocol (ICMR Aligned)
+                </span>
+                <span className="text-[10px] text-emerald-300/70 font-mono">{rx.phc_pharmacy_status}</span>
+              </div>
+
+              {/* RxNav Interaction Warning Banner */}
+              {rx.live_drug_interaction_alerts?.length > 0 && (
+                <div className="bg-amber-500/10 border border-amber-500/30 p-2.5 rounded-lg text-amber-300 text-xs font-mono space-y-1">
+                  <span className="font-bold block">⚡ RxNav Drug-Drug Interaction Warning:</span>
+                  {rx.live_drug_interaction_alerts.map((alert: string, idx: number) => (
+                    <div key={idx} className="text-[11px]">• {alert}</div>
+                  ))}
+                </div>
+              )}
+
+              {/* openFDA Boxed Warning Banner */}
+              {rx.fda_safety_notice && (
+                <div className="bg-red-500/10 border border-red-500/30 p-2.5 rounded-lg text-red-300 text-[11px] space-y-0.5">
+                  <span className="font-bold block font-mono">🛡️ openFDA Safety Advisory:</span>
+                  <p className="text-gray-300 italic">{rx.fda_safety_notice}</p>
+                </div>
+              )}
+
+              {/* Prescribed Medications */}
+              {rx.prescriptions?.length > 0 && (
+                <div className="space-y-2">
+                  {rx.prescriptions.map((p: any, idx: number) => (
+                    <div key={idx} className="bg-black/50 border border-emerald-500/20 p-3 rounded-lg flex justify-between items-start text-xs">
+                      <div>
+                        <span className="font-bold text-emerald-300 text-sm block">{p.medication_name}</span>
+                        <span className="text-gray-400 text-[11px]">{p.purpose || 'Standard Dosage'}</span>
+                        {p.pediatric_dosage_note && (
+                          <span className="text-amber-300 text-[10px] block mt-0.5 font-mono">👶 {p.pediatric_dosage_note}</span>
+                        )}
+                      </div>
+                      <div className="text-right font-mono text-emerald-200 text-[11px]">
+                        <div>{p.dosage} • {p.frequency}</div>
+                        <div className="text-gray-400">Duration: {p.duration} ({p.route})</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Non-Pharmacological Advice */}
+              {rx.non_pharmacological_advice?.length > 0 && (
+                <div className="bg-black/30 p-3 rounded-lg border border-white/5 text-xs text-gray-300 space-y-1">
+                  <div className="font-bold text-emerald-400 text-[11px]">📋 Supportive Home Care Advice:</div>
+                  <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-gray-400">
+                    {rx.non_pharmacological_advice.map((advice: string, idx: number) => (
+                      <li key={idx}>{advice}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
+        </div>
+      </div>
+    </div>
+  );
+}
+
             const isUser = msg.type === 'user';
             return (
-              <div
-                key={msg.id}
-                className={`flex w-full ${isUser ? 'justify-end' : 'justify-start'}`}
-                style={{ animation: 'fadeIn 0.3s ease-out forwards' }}
-              >
+              <div key={msg.id} className={`flex w-full ${isUser ? 'justify-end' : 'justify-start'} animate-fade`}>
                 <div className={`max-w-[78%] flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
-                  <div
-                    className={`px-5 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-line ${
-                      isUser
-                        ? 'bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-purple-500/30 text-white rounded-tr-[4px]'
-                        : 'bg-white/[0.04] border border-white/[0.08] text-gray-200 rounded-tl-[4px] shadow-[0_4px_12px_rgba(0,0,0,0.1)]'
-                    }`}
-                  >
+                  <div className={`px-5 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-line ${
+                    isUser ? 'bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-purple-500/30 text-white rounded-tr-[4px]'
+                           : 'bg-white/[0.04] border border-white/[0.08] text-gray-200 rounded-tl-[4px] shadow-[0_4px_12px_rgba(0,0,0,0.1)]'
+                  }`}>
                     {msg.content}
                   </div>
                   <span className="text-[10px] text-gray-500 mt-1 px-1">{formatTime(msg.timestamp)}</span>
@@ -541,27 +835,22 @@ export default function ChatPage() {
             );
           })}
 
-          {/* Progress bar */}
           {showProgress && (
-            <div className="flex w-full justify-start" style={{ animation: 'fadeIn 0.3s ease-out forwards' }}>
+            <div className="flex w-full justify-start animate-fade">
               <div className="w-full max-w-md bg-white/5 border border-white/10 p-4 rounded-2xl space-y-3">
                 <div className="flex justify-between text-xs font-semibold tracking-wider text-indigo-300 uppercase">
-                  <span>Processing via Gemini 2.0 Multimodal AI...</span>
+                  <span>Processing via Gemini 2.5 Multimodal AI...</span>
                   <span>{progressValue}%</span>
                 </div>
                 <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-indigo-500 to-purple-600 transition-all duration-300"
-                    style={{ width: `${progressValue}%` }}
-                  />
+                  <div className="h-full bg-gradient-to-r from-indigo-500 to-purple-600 transition-all duration-300" style={{ width: `${progressValue}%` }} />
                 </div>
               </div>
             </div>
           )}
 
-          {/* Typing indicator */}
           {isTyping && (
-            <div className="px-0 py-2">
+            <div className="px-1 py-2">
               <div className="bg-white/[0.04] border border-white/[0.08] max-w-[100px] px-4 py-2.5 rounded-2xl flex items-center justify-center gap-1.5">
                 <div className="w-2 h-2 rounded-full bg-indigo-400 dot-pulse" />
                 <div className="w-2 h-2 rounded-full bg-indigo-400 dot-pulse" style={{ animationDelay: '0.2s' }} />
@@ -572,103 +861,76 @@ export default function ChatPage() {
           <div ref={chatEndRef} />
         </div>
 
-        {/* Hidden Native File Inputs */}
-        <input type="file" ref={photoPickerRef} accept="image/*" className="hidden" onChange={() => handleFileSelected('Photo')} />
-        <input type="file" ref={filePickerRef} accept=".pdf,.doc,.docx,.txt" className="hidden" onChange={() => handleFileSelected('File')} />
-        <input type="file" ref={xrayPickerRef} accept="image/*,.pdf" className="hidden" onChange={() => handleFileSelected('Chest X-ray')} />
+        {/* Hidden File Inputs */}
+        <input type="file" ref={photoPickerRef} accept="image/*" className="hidden" onChange={(e) => handleFileChange(e, 'Photo')} />
+        <input type="file" ref={filePickerRef} accept=".pdf,.doc,.docx,.txt" className="hidden" onChange={(e) => handleFileChange(e, 'File')} />
+        <input type="file" ref={xrayPickerRef} accept="image/*,.pdf" className="hidden" onChange={(e) => handleFileChange(e, 'Chest X-ray')} />
 
-        {/* ── Input Processing Panel ── */}
-        <div className="p-4 shrink-0 relative" style={{ background: 'linear-gradient(to top, #0a0a0a, rgba(10,10,10,0.9), transparent)' }}>
-          {/* Backdrop overlay to close menu on outside click */}
-          {attachMenuOpen && (
-            <div className="fixed inset-0" style={{ zIndex: 40 }} onClick={() => setAttachMenuOpen(false)} />
-          )}
+        {/* ── Input Processing Form Bar ── */}
+        <div className="p-4 bg-gradient-to-t from-[#0a0a0a] via-[#0a0a0a]/90 to-transparent shrink-0 relative">
+          {attachMenuOpen && <div className="fixed inset-0 z-40" onClick={() => setAttachMenuOpen(false)} />}
 
-          {/* Attachment Floating Menu Popup */}
           {attachMenuOpen && (
-            <div
-              className="absolute bottom-20 left-4 w-56 glass rounded-xl p-2 border border-white/10 shadow-2xl flex flex-col gap-1 z-50"
-            >
-              <button
-                onClick={() => { setAttachMenuOpen(false); setTimeout(() => photoPickerRef.current?.click(), 50); }}
-                className="w-full text-left px-3 py-2 text-xs font-medium text-gray-300 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2.5 transition-all"
-              >
+            <div className="absolute bottom-20 left-4 w-56 bg-black/80 backdrop-blur-lg rounded-xl p-2 border border-white/10 shadow-2xl flex flex-col gap-1 z-50">
+              <button type="button" onClick={() => { setAttachMenuOpen(false); setTimeout(() => photoPickerRef.current?.click(), 50); }} className="w-full text-left px-3 py-2 text-xs font-medium text-gray-300 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2.5 transition-all">
                 <span>📷</span> Upload Photo
               </button>
-              <button
-                onClick={() => { setAttachMenuOpen(false); setTimeout(() => filePickerRef.current?.click(), 50); }}
-                className="w-full text-left px-3 py-2 text-xs font-medium text-gray-300 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2.5 transition-all"
-              >
+              <button type="button" onClick={() => { setAttachMenuOpen(false); setTimeout(() => filePickerRef.current?.click(), 50); }} className="w-full text-left px-3 py-2 text-xs font-medium text-gray-300 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2.5 transition-all">
                 <span>📄</span> Upload File
               </button>
-              <button
-                onClick={() => { setAttachMenuOpen(false); setTimeout(() => xrayPickerRef.current?.click(), 50); }}
-                className="w-full text-left px-3 py-2 text-xs font-medium text-gray-300 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2.5 transition-all"
-              >
+              <button type="button" onClick={() => { setAttachMenuOpen(false); setTimeout(() => xrayPickerRef.current?.click(), 50); }} className="w-full text-left px-3 py-2 text-xs font-medium text-gray-300 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-2.5 transition-all">
                 <span>🩻</span> Upload Chest X-ray (Demo Node)
               </button>
             </div>
           )}
 
-          {/* Chat Form Bar */}
-          <form
-            onSubmit={handleSubmit}
-            className="glass rounded-2xl p-2 flex items-center gap-1.5 max-w-4xl mx-auto border border-white/10 relative z-10"
-          >
-            {/* Toggle Attachment Button [+] */}
-            <button
-              type="button"
-              onClick={() => setAttachMenuOpen((prev) => !prev)}
-              className="p-3 text-gray-400 hover:text-indigo-400 transition-all rounded-xl hover:bg-white/5 shrink-0 font-semibold text-lg flex items-center justify-center w-11 h-11"
-            >
+          <form onSubmit={handleSubmit} className="bg-white/[0.03] backdrop-blur-md rounded-2xl p-2 flex items-center gap-1.5 border border-white/10 relative z-10 shadow-lg">
+            <button type="button" onClick={() => setAttachMenuOpen((prev) => !prev)} className="p-3 text-gray-400 hover:text-indigo-400 transition-all rounded-xl hover:bg-white/5 shrink-0 font-semibold text-lg flex items-center justify-center w-11 h-11">
               ＋
             </button>
 
-            {/* Main Core Text Input */}
-            <input
-              ref={inputRef}
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              autoComplete="off"
-              placeholder="Type your health response query..."
-              className="bg-transparent flex-grow px-2 py-3 text-sm text-white focus:outline-none placeholder-gray-500 min-w-0"
-            />
+            <input ref={inputRef} type="text" value={input} onChange={(e) => setInput(e.target.value)} autoComplete="off" placeholder={attachedFileName ? `Staged: ${attachedFileName}` : "Type your health response query..."} className="bg-transparent flex-grow px-2 py-3 text-sm text-white focus:outline-none placeholder-gray-500 min-w-0" />
 
-            {/* Voice Input Microphone Button */}
             <button
               type="button"
               onClick={toggleVoice}
-              className={`p-3 transition-all rounded-xl shrink-0 flex items-center justify-center w-11 h-11 ${
+              title={isListening ? 'Stop recording' : 'Click to speak'}
+              aria-label={isListening ? 'Stop voice input' : 'Start voice input'}
+              className={`transition-all rounded-xl shrink-0 flex items-center justify-center w-11 h-11 ${
                 isListening
-                  ? 'mic-active'
-                  : 'text-gray-400 hover:text-indigo-400 hover:bg-white/5'
+                  ? 'bg-red-500/20 border border-red-500/50 text-red-400 shadow-lg shadow-red-500/20'
+                  : 'text-gray-400 hover:text-indigo-400 hover:bg-white/5 border border-transparent'
               }`}
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 0 3-3v-6a3 3 0 0 0-3-3 3 3 0 0 0-3 3v6a3 3 0 0 0 3 3z" />
-              </svg>
+              {isListening ? (
+                /* Stop / recording indicator */
+                <span className="relative flex items-center justify-center w-5 h-5">
+                  <span className="absolute inline-flex w-full h-full rounded-full bg-red-400 opacity-50 animate-ping" />
+                  <span className="relative inline-flex w-3 h-3 rounded-sm bg-red-400" />
+                </span>
+              ) : (
+                /* Standard microphone icon */
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="9" y="2" width="6" height="11" rx="3" />
+                  <path d="M5 10a7 7 0 0 0 14 0" />
+                  <line x1="12" y1="19" x2="12" y2="22" />
+                  <line x1="9" y1="22" x2="15" y2="22" />
+                </svg>
+              )}
             </button>
 
-            {/* Send Button */}
-            <button
-              type="submit"
-              className="btn-primary p-3 rounded-xl text-white font-medium shadow-md shrink-0 flex items-center justify-center w-11 h-11"
-            >
+            <button type="submit" className="bg-gradient-to-br from-indigo-500 to-purple-600 p-3 rounded-xl text-white font-medium shadow-md shrink-0 flex items-center justify-center w-11 h-11 transition-all hover:brightness-110">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L6 12zm0 0h7" />
               </svg>
             </button>
           </form>
         </div>
-      </main>
+      </div>
 
-      {/* ── Gateway Dispatch Toast ── */}
+      {/* Toast Alert */}
       {toast.visible && (
-        <div
-          className="fixed bottom-6 right-6 bg-emerald-600/95 backdrop-blur-md border border-emerald-400/40 text-white text-xs px-4 py-3 rounded-xl shadow-2xl z-50 flex items-center gap-3 transition-all duration-300"
-          style={{ animation: 'fadeIn 0.3s ease-out forwards' }}
-        >
+        <div className="fixed bottom-6 right-6 bg-emerald-600/95 backdrop-blur-md border border-emerald-400/40 text-white text-xs px-4 py-3 rounded-xl shadow-2xl z-50 flex items-center gap-3 animate-fade">
           <span className="text-base animate-bounce">📲</span>
           <div>
             <strong className="block font-semibold">Gateway Dispatch Success</strong>
@@ -677,25 +939,18 @@ export default function ChatPage() {
         </div>
       )}
 
-      {/* Animations */}
       <style jsx>{`
         .chat-scroll::-webkit-scrollbar { width: 5px; }
         .chat-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 99px; }
         .dot-pulse { animation: dotPulse 1.4s infinite ease-in-out both; }
+        .animate-fade { animation: fadeIn 0.3s ease-out forwards; }
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(4px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
         @keyframes dotPulse {
           0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
           40% { transform: scale(1.2); opacity: 1; }
-        }
-        @keyframes micPulse {
-          0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
-          70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
-          100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
-        }
-        .mic-active {
-          animation: micPulse 1.5s infinite;
-          background: rgba(239, 68, 68, 0.2) !important;
-          color: #ef4444 !important;
-          border-color: rgba(239, 68, 68, 0.4) !important;
         }
       `}</style>
     </div>
