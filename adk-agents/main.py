@@ -59,23 +59,6 @@ APP_NAME = "nirog_setu_ai"
 session_service = InMemorySessionService()
 
 
-async def _ensure_session(user_id: str, session_id: str) -> None:
-    """Create a session if it doesn't already exist.
-
-    ADK's InMemorySessionService raises 'Session not found' when run_async is
-    called with a session_id that was never created.  This helper is idempotent:
-    calling it on an already-existing session is a no-op.
-    """
-    try:
-        await session_service.get_session(
-            app_name=APP_NAME, user_id=user_id, session_id=session_id
-        )
-    except Exception:
-        # Session does not exist — create it now
-        await session_service.create_session(
-            app_name=APP_NAME, user_id=user_id, session_id=session_id
-        )
-
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "whatsapp_verify")
 WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
 
@@ -321,9 +304,9 @@ async def chat(request: ChatRequest):
             agent=triage_agent,
             app_name=APP_NAME,
             session_service=session_service,
+            auto_create_session=True,
         )
 
-        await _ensure_session(request.user_id, session_id)
         triage_output = ""
         async for event in triage_runner.run_async(
             user_id=request.user_id,
@@ -353,8 +336,8 @@ async def chat(request: ChatRequest):
                     agent=emergency_agent,
                     app_name=APP_NAME,
                     session_service=session_service,
+                    auto_create_session=True,
                 )
-                await _ensure_session(request.user_id, session_id + "_emg")
                 emergency_output = ""
                 async for event in emergency_runner.run_async(
                     user_id=request.user_id,
@@ -377,6 +360,7 @@ async def chat(request: ChatRequest):
                     agent=diagnose_agent,
                     app_name=APP_NAME,
                     session_service=session_service,
+                    auto_create_session=True,
                 )
 
                 diag_prompt = (
@@ -389,7 +373,6 @@ async def chat(request: ChatRequest):
 
                 diag_content = types.Content(role="user", parts=diag_parts)
 
-                await _ensure_session(request.user_id, session_id + "_diag")
                 diagnose_output = ""
                 async for event in diagnose_runner.run_async(
                     user_id=request.user_id,
@@ -410,6 +393,7 @@ async def chat(request: ChatRequest):
                         agent=prescribe_agent,
                         app_name=APP_NAME,
                         session_service=session_service,
+                        auto_create_session=True,
                     )
 
                     # Extract only the English clinical fields — prevents multilingual
@@ -428,7 +412,6 @@ async def chat(request: ChatRequest):
                     )
                     presc_content = types.Content(role="user", parts=[types.Part(text=presc_prompt)])
 
-                    await _ensure_session(request.user_id, session_id + "_presc")
                     prescribe_output = ""
                     async for event in prescribe_runner.run_async(
                         user_id=request.user_id,
@@ -532,6 +515,7 @@ async def triage_only(request: ChatRequest):
             agent=triage_agent,
             app_name=APP_NAME,
             session_service=session_service,
+            auto_create_session=True,
         )
 
         content = types.Content(
@@ -539,7 +523,6 @@ async def triage_only(request: ChatRequest):
             parts=[types.Part(text=request.message)],
         )
 
-        await _ensure_session(request.user_id, session_id)
         final_response = ""
         async for event in triage_runner.run_async(
             user_id=request.user_id,
@@ -586,6 +569,7 @@ async def diagnose_only(request: DiagnoseRequest):
             agent=diagnose_agent,
             app_name=APP_NAME,
             session_service=session_service,
+            auto_create_session=True,
         )
 
         history_text = " ".join(
@@ -599,7 +583,6 @@ async def diagnose_only(request: DiagnoseRequest):
 
         diag_content = types.Content(role="user", parts=diag_parts)
 
-        await _ensure_session("anon", session_id)
         diagnose_output = ""
         async for event in diagnose_runner.run_async(
             user_id="anon",
@@ -643,6 +626,7 @@ async def prescribe_only(request: PrescribeRequest):
             agent=prescribe_agent,
             app_name=APP_NAME,
             session_service=session_service,
+            auto_create_session=True,
         )
 
         clinical_summary = {
@@ -659,7 +643,6 @@ async def prescribe_only(request: PrescribeRequest):
         )
         presc_content = types.Content(role="user", parts=[types.Part(text=presc_prompt)])
 
-        await _ensure_session("anon", session_id)
         prescribe_output = ""
         async for event in prescribe_runner.run_async(
             user_id="anon",
