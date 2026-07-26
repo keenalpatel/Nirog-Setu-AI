@@ -1,11 +1,16 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { Activity, AlertTriangle, Brain, Heart, MapPin, Pill, CheckCircle2, Clock, Zap } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
 import { AgentStatusCard } from '@/components/agents/agent-status-card';
-import { use } from 'react';
+import { createClient } from '@supabase/supabase-js';
+
+// Clean execution initializing using public keys safely matching your local environment
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+);
 
 const agentConfig: Record<string, { name: string; description: string; icon: typeof Activity; color: string; capabilities: string[] }> = {
   triage: {
@@ -91,6 +96,42 @@ const agentConfig: Record<string, { name: string; description: string; icon: typ
 export default function AgentDetailPage({ params }: { params: { agent: string } }) {
   const agentId = params.agent;
   const config = agentConfig[agentId];
+  
+  const [metrics, setMetrics] = useState({ totalRuns: 0, successRate: 100, recentActivity: [] as any[] });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!config) return;
+
+    async function fetchAgentTelemetry() {
+      try {
+        // Query your screenings layout matching the active agent parameters
+        const { data, error } = await supabase
+          .from('screenings')
+          .select('*')
+          .eq('agent_type', agentId)
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        if (data) {
+          const successfulRuns = data.filter(item => item.status === 'completed').length;
+          const calculatedRate = data.length > 0 ? Math.round((successfulRuns / data.length) * 100) : 100;
+          
+          setMetrics({
+            totalRuns: data.length,
+            successRate: calculatedRate,
+            recentActivity: data.slice(0, 5)
+          });
+        }
+      } catch (err) {
+        console.error('Telemetry fetch failure:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchAgentTelemetry();
+  }, [agentId, config]);
 
   if (!config) {
     return (
@@ -108,7 +149,7 @@ export default function AgentDetailPage({ params }: { params: { agent: string } 
 
   return (
     <div className="p-6 space-y-6">
-      {/* Header */}
+      {/* Header Visual Matrix */}
       <div className="flex items-center gap-4">
         <div className={`h-16 w-16 rounded-2xl bg-${config.color}-500/10 flex items-center justify-center`}>
           <IconComponent className={`h-8 w-8 text-${config.color}-500`} />
@@ -119,17 +160,17 @@ export default function AgentDetailPage({ params }: { params: { agent: string } 
         </div>
       </div>
 
-      {/* Status Card */}
+      {/* Dynamic Status Tracking Block */}
       <AgentStatusCard
         agent={agentId as any}
         status="active"
-        lastUsed="1m ago"
-        totalRuns={Math.floor(Math.random() * 10000 + 5000)}
-        successRate={Math.floor(Math.random() * 10 + 90)}
-        currentTask="Processing patient query..."
+        lastUsed={metrics.recentActivity.length > 0 ? "Just now" : "No recent runs"}
+        totalRuns={metrics.totalRuns}
+        successRate={metrics.successRate}
+        currentTask={loading ? "Loading telemetry..." : "Awaiting triage event stream..."}
       />
 
-      {/* Capabilities */}
+      {/* Capabilities Layout */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -150,28 +191,34 @@ export default function AgentDetailPage({ params }: { params: { agent: string } 
         </CardContent>
       </Card>
 
-      {/* Recent Activity */}
+      {/* Recent Activity Engine */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Clock className="h-5 w-5 text-primary" />
             Recent Activity
           </CardTitle>
-          <CardDescription>Last 10 actions performed</CardDescription>
+          <CardDescription>Live actions pulled directly from Supabase logs</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-2">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-muted">
-                <div className="flex items-center gap-3">
-                  <div className="h-2 w-2 rounded-full bg-emerald-500" />
-                  <span className="text-sm">Patient screening processed</span>
+            {metrics.recentActivity.length === 0 ? (
+              <p className="text-sm text-muted-foreground p-3">No evaluations processed yet by this agent core.</p>
+            ) : (
+              metrics.recentActivity.map((activity, i) => (
+                <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-muted">
+                  <div className="flex items-center gap-3">
+                    <div className="h-2 w-2 rounded-full bg-emerald-500" />
+                    <span className="text-sm">
+                      Screening processed: <strong>{activity.diagnosis || 'Undetermined'}</strong> ({activity.severity})
+                    </span>
+                  </div>
+                  <span className="text-xs text-muted-foreground">
+                    {new Date(activity.created_at).toLocaleTimeString()}
+                  </span>
                 </div>
-                <span className="text-xs text-muted-foreground">
-                  {Math.floor(Math.random() * 20 + 1)}m ago
-                </span>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </CardContent>
       </Card>
