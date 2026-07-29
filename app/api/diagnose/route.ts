@@ -3,7 +3,7 @@ import { VertexAI, FunctionDeclarationSchemaType } from '@google-cloud/vertexai'
 
 export const maxDuration = 30;
 
-const projectId = process.env.GCP_PROJECT_ID || 'project-ad67eb63-a729-4ed5-a89d';
+const projectId = (process.env.GCP_PROJECT_ID || '').trim();
 const location = process.env.GCP_LOCATION || 'us-central1';
 const vertexAI = new VertexAI({ project: projectId, location });
 
