@@ -241,7 +241,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const baseUrl = process.env.INTERNAL_API_URL || 'http://localhost:3000';
+    const baseUrl = (process.env.INTERNAL_API_URL || 'http://localhost:3000').trimEnd();
     const triageUrl = `${baseUrl}/api/triage`;
     const triageResponse = await fetch(triageUrl, {
       method: 'POST',
@@ -249,7 +249,7 @@ export async function POST(request: Request) {
       body: JSON.stringify({
         message: messageText,
         imageBase64: imageBase64,
-        history: [{ type: 'user', content: messageText }],
+        history: [],
       }),
     });
 
